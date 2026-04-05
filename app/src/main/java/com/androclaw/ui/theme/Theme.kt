@@ -1,62 +1,108 @@
 package com.androclaw.ui.theme
 
-import android.os.Build
+import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 
-private val Purple = Color(0xFF7C4DFF)
-private val PurpleDark = Color(0xFF651FFF)
-private val PurpleLight = Color(0xFFB388FF)
-private val Orange = Color(0xFFFF6D00)
+// ── Brand Colors ──
+val Accent = Color(0xFF6C5CE7)
+val AccentLight = Color(0xFF8B7CF7)
+val AccentSubtle = Color(0xFFEDE9FF)
+val AccentDark = Color(0xFF5A4BD1)
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple,
-    secondary = Orange,
-    tertiary = PurpleLight,
-    background = Color(0xFF121212),
-    surface = Color(0xFF1E1E1E),
-    surfaceVariant = Color(0xFF2D2D2D),
-    onBackground = Color.White,
-    onSurface = Color.White,
-    onPrimary = Color.White
+// ── Light Theme ──
+private val LightColors = lightColorScheme(
+    primary = Accent,
+    onPrimary = Color.White,
+    primaryContainer = AccentSubtle,
+    onPrimaryContainer = AccentDark,
+    secondary = Color(0xFF636E72),
+    onSecondary = Color.White,
+    background = Color(0xFFFAFAFA),
+    onBackground = Color(0xFF1A1A2E),
+    surface = Color.White,
+    onSurface = Color(0xFF1A1A2E),
+    surfaceVariant = Color(0xFFF0F0F5),
+    onSurfaceVariant = Color(0xFF636E72),
+    outline = Color(0xFFE0E0E8),
+    outlineVariant = Color(0xFFF0F0F5),
+    error = Color(0xFFE74C3C),
+    onError = Color.White,
+    surfaceContainerHighest = Color(0xFFF5F5FA),
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = Purple,
-    secondary = Orange,
-    tertiary = PurpleDark,
-    background = Color(0xFFF5F5F5),
-    surface = Color.White,
-    surfaceVariant = Color(0xFFEEEEEE),
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    onPrimary = Color.White
+// ── Dark Theme ──
+private val DarkColors = darkColorScheme(
+    primary = AccentLight,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFF2D2A4A),
+    onPrimaryContainer = AccentLight,
+    secondary = Color(0xFFB2BEC3),
+    onSecondary = Color.White,
+    background = Color(0xFF0F0F1A),
+    onBackground = Color(0xFFEAEAF0),
+    surface = Color(0xFF16162A),
+    onSurface = Color(0xFFEAEAF0),
+    surfaceVariant = Color(0xFF1E1E35),
+    onSurfaceVariant = Color(0xFF9A9AB0),
+    outline = Color(0xFF2A2A45),
+    outlineVariant = Color(0xFF1E1E35),
+    error = Color(0xFFFF6B6B),
+    onError = Color.White,
+    surfaceContainerHighest = Color(0xFF1A1A30),
+)
+
+// ── Typography ──
+val AppTypography = Typography(
+    displayLarge = TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp),
+    displayMedium = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.25).sp),
+    headlineLarge = TextStyle(fontSize = 24.sp, fontWeight = FontWeight.SemiBold),
+    headlineMedium = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.SemiBold),
+    headlineSmall = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Medium),
+    titleLarge = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.15.sp),
+    titleMedium = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.1.sp),
+    bodyLarge = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Normal, lineHeight = 24.sp),
+    bodyMedium = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Normal, lineHeight = 20.sp),
+    bodySmall = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Normal, lineHeight = 16.sp),
+    labelLarge = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.1.sp),
+    labelMedium = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.5.sp),
+    labelSmall = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.5.sp),
 )
 
 @Composable
 fun AndroClawTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    val colorScheme = if (darkTheme) DarkColors else LightColors
+
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as Activity).window
+            window.statusBarColor = colorScheme.background.toArgb()
+            window.navigationBarColor = colorScheme.background.toArgb()
+            val controller = WindowCompat.getInsetsController(window, view)
+            controller.isAppearanceLightStatusBars = !darkTheme
+            controller.isAppearanceLightNavigationBars = !darkTheme
         }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
     }
 
     MaterialTheme(
         colorScheme = colorScheme,
+        typography = AppTypography,
         content = content
     )
 }

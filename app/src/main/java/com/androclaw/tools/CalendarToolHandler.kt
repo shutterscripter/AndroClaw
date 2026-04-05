@@ -18,10 +18,9 @@ class CalendarToolHandler @Inject constructor(
     private val permissionHelper: PermissionHelper
 ) {
 
-    fun execute(input: Map<String, Any>): String {
-        if (!permissionHelper.hasCalendarPermission(context)) {
-            return "Calendar permission not granted. Please grant calendar permissions in app settings."
-        }
+    suspend fun execute(input: Map<String, Any>): String {
+        val permError = permissionHelper.ensurePermissionsForTool(context, "create_calendar_event")
+        if (permError != null) return permError
 
         val title = input["title"] as? String ?: return "Missing event title"
         val date = input["date"] as? String ?: return "Missing event date"

@@ -14,10 +14,14 @@ import javax.inject.Singleton
 
 @Singleton
 class FileToolHandler @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val permissionHelper: com.androclaw.utils.PermissionHelper
 ) {
 
-    fun execute(input: Map<String, Any>): String {
+    suspend fun execute(input: Map<String, Any>): String {
+        // Request storage permission for file operations
+        val permError = permissionHelper.ensurePermissionsForTool(context, "file_manager")
+        if (permError != null) return permError
         val action = input["action"] as? String ?: return "Missing action (find, open, share, list, info)"
 
         return when (action.lowercase()) {

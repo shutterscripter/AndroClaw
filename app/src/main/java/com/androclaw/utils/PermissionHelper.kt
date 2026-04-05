@@ -94,6 +94,30 @@ class PermissionHelper @Inject constructor() {
         }
     }
 
+    /**
+     * Check if tool has required permissions. If not, request them via the RuntimePermissionManager
+     * which bridges to the active Activity's permission dialog.
+     *
+     * Returns null if all permissions are granted (proceed with tool execution).
+     * Returns an error message string if permissions were denied after asking.
+     */
+    suspend fun ensurePermissionsForTool(context: Context, toolName: String): String? {
+        val missing = getMissingPermissions(context, toolName)
+        if (missing.isEmpty()) return null // All good
+
+        // Request permissions via the Activity bridge
+        val results = RuntimePermissionManager.request(missing, toolName)
+
+        // Check if all were granted
+        val stillMissing = missing.filter { results[it] != true }
+        return if (stillMissing.isEmpty()) {
+            null // All granted now
+        } else {
+            val permNames = stillMissing.map { it.substringAfterLast('.').lowercase().replace('_', ' ') }
+            "Permission denied: ${permNames.joinToString(", ")}. Please grant ${permNames.first()} permission in your device Settings to use this feature."
+        }
+    }
+
     fun requestPermissions(activity: Activity, permissions: List<String>, requestCode: Int) {
         ActivityCompat.requestPermissions(activity, permissions.toTypedArray(), requestCode)
     }

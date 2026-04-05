@@ -2,7 +2,6 @@ package com.androclaw.tools
 
 import android.content.Context
 import android.database.Cursor
-import android.net.Uri
 import android.provider.ContactsContract
 import android.telephony.SmsManager
 import com.androclaw.utils.PermissionHelper
@@ -16,17 +15,20 @@ class SmsToolHandler @Inject constructor(
     private val permissionHelper: PermissionHelper
 ) {
 
-    fun execute(input: Map<String, Any>): String {
-        if (!permissionHelper.hasSmsPermission(context)) {
-            return "SMS permission not granted. Please grant SMS permission in app settings."
-        }
+    suspend fun execute(input: Map<String, Any>): String {
+        // Request SMS permission if not granted
+        val permError = permissionHelper.ensurePermissionsForTool(context, "send_sms")
+        if (permError != null) return permError
 
         val message = input["message"] as? String ?: return "Missing message text"
         var phoneNumber = input["phone_number"] as? String
         val contactName = input["contact_name"] as? String
 
-        // Resolve contact name to phone number if needed
         if (phoneNumber == null && contactName != null) {
+            // Need contacts permission to resolve name
+            val contactPermError = permissionHelper.ensurePermissionsForTool(context, "get_contacts")
+            if (contactPermError != null) return "Need contacts permission to look up \"$contactName\". $contactPermError"
+
             phoneNumber = resolveContactNumber(contactName)
                 ?: return "Could not find contact: $contactName"
         }
@@ -50,8 +52,6 @@ class SmsToolHandler @Inject constructor(
     }
 
     private fun resolveContactNumber(name: String): String? {
-        if (!permissionHelper.hasContactsPermission(context)) return null
-
         val uri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI
         val projection = arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER)
         val selection = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"

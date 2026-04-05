@@ -2,8 +2,10 @@ package com.androclaw.ui
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,19 +13,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Accessibility
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.SmartToy
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -35,6 +40,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -49,13 +55,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.androclaw.ui.theme.Accent
 import com.androclaw.utils.Constants
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -68,26 +75,27 @@ fun SettingsScreen(
     var showClearDialog by remember { mutableStateOf(false) }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        text = "AndroClaw Settings",
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        text = "Settings",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onBackground
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                             contentDescription = "Back",
-                            tint = Color.White
+                            tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF651FFF)
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         }
@@ -97,11 +105,13 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            // API Key Section
-            SectionCard(title = "Claude API Key") {
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // ── API Key ──
+            SettingsSection(title = "API Configuration", icon = Icons.Outlined.Key) {
                 var apiKey by remember { mutableStateOf(viewModel.getApiKey()) }
                 var showKey by remember { mutableStateOf(false) }
 
@@ -112,23 +122,29 @@ fun SettingsScreen(
                         viewModel.setApiKey(it)
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("API Key") },
-                    placeholder = { Text("sk-ant-...") },
+                    label = { Text("Claude API Key") },
+                    placeholder = { Text("sk-ant-api03-...") },
                     visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { showKey = !showKey }) {
                             Icon(
-                                imageVector = if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                contentDescription = "Toggle visibility"
+                                imageVector = if (showKey) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                contentDescription = "Toggle visibility",
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     },
-                    singleLine = true
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Accent,
+                        cursorColor = Accent
+                    )
                 )
             }
 
-            // Model Selector
-            SectionCard(title = "Model") {
+            // ── Model Selection ──
+            SettingsSection(title = "Model", icon = Icons.Outlined.SmartToy) {
                 var expanded by remember { mutableStateOf(false) }
                 val currentModel = viewModel.getModel()
                 val modelName = Constants.MODEL_OPTIONS[currentModel] ?: currentModel
@@ -144,7 +160,11 @@ fun SettingsScreen(
                             .fillMaxWidth()
                             .menuAnchor(MenuAnchorType.PrimaryNotEditable),
                         readOnly = true,
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Accent
+                        )
                     )
                     ExposedDropdownMenu(
                         expanded = expanded,
@@ -152,7 +172,16 @@ fun SettingsScreen(
                     ) {
                         Constants.MODEL_OPTIONS.forEach { (modelId, displayName) ->
                             DropdownMenuItem(
-                                text = { Text(displayName) },
+                                text = {
+                                    Column {
+                                        Text(displayName, style = MaterialTheme.typography.bodyLarge)
+                                        Text(
+                                            modelId,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                },
                                 onClick = {
                                     viewModel.setModel(modelId)
                                     expanded = false
@@ -163,128 +192,244 @@ fun SettingsScreen(
                 }
             }
 
-            // Tool Toggles
-            SectionCard(title = "Enabled Tools") {
-                val enabledTools = viewModel.getEnabledTools()
-
-                Constants.ALL_TOOL_NAMES.forEach { tool ->
-                    val isChecked = tool in enabledTools
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { viewModel.toggleTool(tool) }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = isChecked,
-                            onCheckedChange = { viewModel.toggleTool(tool) },
-                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFF7C4DFF))
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = tool.replace("_", " ").replaceFirstChar { it.uppercase() },
-                            fontSize = 15.sp
-                        )
-                    }
-                }
+            // ── Floating Button ──
+            SettingsSection(title = "Floating Assistant", icon = Icons.Outlined.ChatBubbleOutline) {
+                SettingsToggleRow(
+                    title = "Floating button overlay",
+                    subtitle = "Quick access from any app",
+                    checked = viewModel.isFloatingButtonEnabled(),
+                    onCheckedChange = { viewModel.setFloatingButtonEnabled(it) }
+                )
             }
 
-            // Floating Button Toggle
-            SectionCard(title = "Floating Button") {
+            // ── Accessibility ──
+            SettingsSection(title = "Accessibility", icon = Icons.Outlined.Accessibility) {
+                Text(
+                    text = "Required for controlling other apps, taking screenshots, and auto-scrolling feeds.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
+                        .clickable {
+                            context.startActivity(
+                                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                            )
+                        }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
                 ) {
-                    Text("Enable floating button overlay")
-                    Switch(
-                        checked = viewModel.isFloatingButtonEnabled(),
-                        onCheckedChange = { viewModel.setFloatingButtonEnabled(it) },
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF7C4DFF))
+                    Icon(
+                        Icons.Outlined.Accessibility,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Open Accessibility Settings",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }
 
-            // Accessibility Service
-            SectionCard(title = "Accessibility Service") {
-                Text(
-                    text = "Required for controlling other apps' UI. Tap to open accessibility settings.",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            // ── Tools ──
+            SettingsSection(title = "Enabled Tools") {
+                val enabledTools = viewModel.getEnabledTools()
+                val toolGroups = mapOf(
+                    "Communication" to listOf("send_sms", "make_phone_call", "send_whatsapp", "send_email", "get_contacts"),
+                    "Apps & Web" to listOf("open_app", "list_apps", "browse_web"),
+                    "Device" to listOf("toggle_setting", "brightness_control", "media_control", "device_info"),
+                    "Productivity" to listOf("create_calendar_event", "set_reminder", "set_alarm", "clipboard", "file_manager"),
+                    "Advanced" to listOf("take_screenshot", "share_content", "notifications", "auto_scroll_feed", "control_app_ui")
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        })
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C4DFF))
-                ) {
-                    Text("Open Accessibility Settings")
+
+                toolGroups.forEach { (groupName, tools) ->
+                    Text(
+                        text = groupName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                    )
+                    tools.forEach { tool ->
+                        if (tool in Constants.ALL_TOOL_NAMES) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { viewModel.toggleTool(tool) }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = tool in enabledTools,
+                                    onCheckedChange = { viewModel.toggleTool(tool) },
+                                    colors = CheckboxDefaults.colors(checkedColor = Accent),
+                                    modifier = Modifier.size(40.dp)
+                                )
+                                Text(
+                                    text = formatToolName(tool),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
-            // Clear History
-            SectionCard(title = "Data") {
-                Button(
-                    onClick = { showClearDialog = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+            // ── Danger Zone ──
+            SettingsSection(title = "Data") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.error.copy(alpha = 0.08f))
+                        .clickable { showClearDialog = true }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
                 ) {
-                    Icon(Icons.Default.Delete, contentDescription = null)
+                    Icon(
+                        Icons.Outlined.Delete,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Clear Conversation History")
+                    Text(
+                        text = "Clear Conversation History",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(40.dp))
         }
     }
 
     if (showClearDialog) {
         AlertDialog(
             onDismissRequest = { showClearDialog = false },
-            title = { Text("Clear History") },
-            text = { Text("This will permanently delete all conversation history. Are you sure?") },
+            title = {
+                Text("Clear History", style = MaterialTheme.typography.headlineSmall)
+            },
+            text = {
+                Text(
+                    "This will permanently delete all conversation history.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.clearHistory()
                     showClearDialog = false
                 }) {
-                    Text("Clear", color = Color(0xFFD32F2F))
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showClearDialog = false }) {
                     Text("Cancel")
                 }
-            }
+            },
+            shape = RoundedCornerShape(20.dp)
         )
     }
 }
 
 @Composable
-private fun SectionCard(
+private fun SettingsSection(
     title: String,
+    icon: ImageVector? = null,
     content: @Composable () -> Unit
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(20.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (icon != null) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+            }
             Text(
                 text = title,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-                color = Color(0xFF7C4DFF)
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface
             )
-            Spacer(modifier = Modifier.height(12.dp))
-            content()
         }
+        Spacer(modifier = Modifier.height(16.dp))
+        content()
+    }
+}
+
+@Composable
+private fun SettingsToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = Accent
+            )
+        )
+    }
+}
+
+private fun formatToolName(toolName: String): String {
+    return toolName.replace("_", " ").split(" ").joinToString(" ") {
+        it.replaceFirstChar { c -> c.uppercase() }
     }
 }

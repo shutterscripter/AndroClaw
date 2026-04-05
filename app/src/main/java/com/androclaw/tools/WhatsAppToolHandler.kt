@@ -15,11 +15,12 @@ class WhatsAppToolHandler @Inject constructor(
     private val permissionHelper: PermissionHelper
 ) {
 
-    fun execute(input: Map<String, Any>): String {
+    suspend fun execute(input: Map<String, Any>): String {
         val contactName = input["contact_name"] as? String ?: return "Missing contact_name"
         val message = input["message"] as? String ?: return "Missing message"
 
-        // Try to resolve phone number from contacts
+        // Request contacts permission to resolve name, but don't fail if denied
+        permissionHelper.ensurePermissionsForTool(context, "get_contacts")
         val phoneNumber = if (permissionHelper.hasContactsPermission(context)) {
             resolvePhoneNumber(contactName)
         } else null

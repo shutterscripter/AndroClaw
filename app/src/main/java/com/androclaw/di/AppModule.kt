@@ -8,6 +8,7 @@ import com.androclaw.api.ClaudeApiService
 import com.androclaw.api.ClaudeResponseConverterFactory
 import com.androclaw.api.MessageAdapter
 import com.androclaw.db.AndroClawDatabase
+import com.androclaw.db.ConversationDao
 import com.androclaw.db.MessageDao
 import com.androclaw.utils.Constants
 import com.squareup.moshi.Moshi
@@ -74,6 +75,11 @@ object AppModule {
     @Singleton
     fun provideMessageDao(database: AndroClawDatabase): MessageDao =
         database.messageDao()
+
+    @Provides
+    @Singleton
+    fun provideConversationDao(database: AndroClawDatabase): ConversationDao =
+        database.conversationDao()
 
     @Provides
     @Singleton
