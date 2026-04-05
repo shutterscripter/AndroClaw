@@ -15,27 +15,29 @@ class PhoneCallToolHandler @Inject constructor(
     private val permissionHelper: PermissionHelper
 ) {
 
-    fun execute(input: Map<String, Any>): String {
+    suspend fun execute(input: Map<String, Any>): String {
+        // Request CALL_PHONE permission if not granted
+        val permError = permissionHelper.ensurePermissionsForTool(context, "make_phone_call")
+        if (permError != null) return permError
+
         var phoneNumber = input["phone_number"] as? String
         val contactName = input["contact_name"] as? String
-        val useSpeaker = input["speaker"] as? Boolean ?: false
 
-        // Resolve contact name to number
         if (phoneNumber == null && contactName != null) {
-            if (!permissionHelper.hasContactsPermission(context)) {
-                return "Contacts permission not granted. Cannot look up \"$contactName\"."
-            }
+            // Need contacts permission to resolve name
+            val contactPermError = permissionHelper.ensurePermissionsForTool(context, "get_contacts")
+            if (contactPermError != null) return "Need contacts permission to look up \"$contactName\". $contactPermError"
+
             val results = searchContacts(contactName)
             if (results.isEmpty()) {
                 return "No contact found matching \"$contactName\". Try providing the phone number directly."
             }
             if (results.size > 1) {
                 val list = results.take(5).joinToString("\n") { "- ${it.first}: ${it.second}" }
-                // Use the first match but inform about alternatives
                 phoneNumber = results.first().second
                 return try {
                     makeCall(phoneNumber)
-                    "Calling ${results.first().first} (${phoneNumber}).\n\nOther matches:\n$list"
+                    "Calling ${results.first().first} ($phoneNumber).\n\nOther matches:\n$list"
                 } catch (e: Exception) {
                     "Found multiple contacts:\n$list\nFailed to call: ${e.message}"
                 }
@@ -71,8 +73,6 @@ class PhoneCallToolHandler @Inject constructor(
             ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
             ContactsContract.CommonDataKinds.Phone.NUMBER
         )
-
-        // Try exact match first, then partial
         val selection = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
         val selectionArgs = arrayOf("%$query%")
 
@@ -94,7 +94,6 @@ class PhoneCallToolHandler @Inject constructor(
             }
         }
 
-        // Sort: exact matches first, then starts-with, then contains
         val q = query.lowercase()
         return results.sortedWith(compareBy(
             { !it.first.lowercase().equals(q) },

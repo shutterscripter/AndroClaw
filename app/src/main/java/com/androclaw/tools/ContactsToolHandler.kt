@@ -13,10 +13,9 @@ class ContactsToolHandler @Inject constructor(
     private val permissionHelper: PermissionHelper
 ) {
 
-    fun execute(input: Map<String, Any>): String {
-        if (!permissionHelper.hasContactsPermission(context)) {
-            return "Contacts permission not granted. Please grant contacts permission in app settings."
-        }
+    suspend fun execute(input: Map<String, Any>): String {
+        val permError = permissionHelper.ensurePermissionsForTool(context, "get_contacts")
+        if (permError != null) return permError
 
         val nameQuery = input["name_query"] as? String ?: return "Missing name_query"
 

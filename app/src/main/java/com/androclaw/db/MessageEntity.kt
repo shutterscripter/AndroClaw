@@ -1,14 +1,28 @@
 package com.androclaw.db
 
 import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "messages")
+@Entity(
+    tableName = "messages",
+    foreignKeys = [
+        ForeignKey(
+            entity = ConversationEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["conversationId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("conversationId")]
+)
 data class MessageEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val conversationId: Long,
     val role: String, // "user", "assistant", "tool_status"
     val content: String,
     val toolName: String? = null,
-    val toolStatus: String? = null, // "executing", "completed", "error"
+    val toolStatus: String? = null,
     val timestamp: Long = System.currentTimeMillis()
 )

@@ -3,6 +3,7 @@ package com.androclaw.ui
 import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.androclaw.db.ConversationDao
 import com.androclaw.db.MessageDao
 import com.androclaw.utils.Constants
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -14,7 +15,8 @@ import javax.inject.Named
 class SettingsViewModel @Inject constructor(
     @Named("encrypted") private val encryptedPrefs: SharedPreferences,
     @Named("regular") private val prefs: SharedPreferences,
-    private val messageDao: MessageDao
+    private val messageDao: MessageDao,
+    private val conversationDao: ConversationDao
 ) : ViewModel() {
 
     fun getApiKey(): String =
@@ -53,6 +55,7 @@ class SettingsViewModel @Inject constructor(
     fun clearHistory() {
         viewModelScope.launch {
             messageDao.clearAll()
+            conversationDao.deleteAll()
         }
     }
 }

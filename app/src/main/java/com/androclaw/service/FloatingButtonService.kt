@@ -17,7 +17,6 @@ import android.view.View
 import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.FrameLayout
-import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.androclaw.AndroClawApplication
 import com.androclaw.ChatActivity
@@ -92,10 +91,11 @@ class FloatingButtonService : Service() {
 
         // Create the floating button view
         floatingView = FrameLayout(this).apply {
-            val button = TextView(this@FloatingButtonService).apply {
-                text = "\uD83E\uDD9E"  // Lobster/claw emoji
-                textSize = 28f
-                gravity = android.view.Gravity.CENTER
+            val logoBitmap = assets.open("app_logo.png").use { android.graphics.BitmapFactory.decodeStream(it) }
+            val button = android.widget.ImageView(this@FloatingButtonService).apply {
+                setImageBitmap(logoBitmap)
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                setPadding(16, 16, 16, 16)
                 setBackgroundResource(R.drawable.floating_button_bg)
                 elevation = 8f
             }
