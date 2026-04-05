@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">AndroClaw</string>
+    <string name="accessibility_service_description">AndroClaw uses accessibility to control apps on your behalf — tapping buttons, typing text, and navigating screens when you give it commands.</string>
+    <string name="notification_channel_name">AndroClaw Agent</string>
+    <string name="notification_channel_description">Shows when AndroClaw agent is running</string>
+    <string name="notification_content">AndroClaw is running</string>
+    <string name="settings_title">AndroClaw Settings</string>
+</resources>
