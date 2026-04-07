@@ -1,6 +1,5 @@
 package com.androclaw.service
 
-import android.animation.ValueAnimator
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
@@ -15,20 +14,53 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.FrameLayout
+import androidx.compose.ui.platform.ComposeView
 import androidx.core.app.NotificationCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.androclaw.AndroClawApplication
 import com.androclaw.ChatActivity
 import com.androclaw.R
+import com.androclaw.api.ClaudeRepository
+import com.androclaw.db.ConversationDao
+import com.androclaw.db.MessageDao
+import com.androclaw.ui.theme.AndroClawTheme
 import com.androclaw.utils.Constants
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
-class FloatingButtonService : Service() {
+@AndroidEntryPoint
+class FloatingButtonService : Service(), LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
+
+    // Lifecycle support for ComposeView in a Service
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    private val savedStateRegistryController = SavedStateRegistryController.create(this)
+    private val store = ViewModelStore()
+    override val lifecycle: Lifecycle get() = lifecycleRegistry
+    override val savedStateRegistry: SavedStateRegistry get() = savedStateRegistryController.savedStateRegistry
+    override val viewModelStore: ViewModelStore get() = store
+
+    @Inject lateinit var repository: ClaudeRepository
+    @Inject lateinit var messageDao: MessageDao
+    @Inject lateinit var conversationDao: ConversationDao
 
     private lateinit var windowManager: WindowManager
     private lateinit var floatingView: View
     private lateinit var prefs: SharedPreferences
-    private var pulseAnimator: ValueAnimator? = null
+
+    private var chatOverlayView: View? = null
+    private var chatManager: OverlayChatManager? = null
+    private var isChatOpen = false
 
     private var initialX = 0
     private var initialY = 0
@@ -40,18 +72,20 @@ class FloatingButtonService : Service() {
     private val longPressRunnable = Runnable {
         longPressTriggered = true
         vibrate()
-        showQuickActions()
+        openFullApp()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
+        savedStateRegistryController.performRestore(null)
+        lifecycleRegistry.currentState = Lifecycle.State.CREATED
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         prefs = getSharedPreferences(Constants.PREFS_NAME, MODE_PRIVATE)
         createFloatingButton()
         startForegroundNotification()
-        startPulseAnimation()
+        lifecycleRegistry.currentState = Lifecycle.State.STARTED
     }
 
     private fun startForegroundNotification() {
@@ -89,20 +123,17 @@ class FloatingButtonService : Service() {
             y = savedY
         }
 
-        // Create the floating button view
         floatingView = FrameLayout(this).apply {
             val logoBitmap = assets.open("app_logo.png").use { android.graphics.BitmapFactory.decodeStream(it) }
             val button = android.widget.ImageView(this@FloatingButtonService).apply {
                 setImageBitmap(logoBitmap)
                 scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
                 setPadding(16, 16, 16, 16)
-                setBackgroundResource(R.drawable.floating_button_bg)
                 elevation = 8f
             }
             addView(button, FrameLayout.LayoutParams(BUTTON_SIZE, BUTTON_SIZE))
         }
 
-        // Touch handler for drag, tap, long press
         floatingView.setOnTouchListener(object : View.OnTouchListener {
             override fun onTouch(v: View, event: MotionEvent): Boolean {
                 when (event.action) {
@@ -133,15 +164,13 @@ class FloatingButtonService : Service() {
                     MotionEvent.ACTION_UP -> {
                         v.handler?.removeCallbacks(longPressRunnable)
                         if (isMoving) {
-                            // Save position
                             prefs.edit()
                                 .putInt(Constants.PREF_FLOATING_BUTTON_X, params.x)
                                 .putInt(Constants.PREF_FLOATING_BUTTON_Y, params.y)
                                 .apply()
                         } else if (!longPressTriggered) {
-                            // Single tap — open chat
                             vibrate()
-                            openChat()
+                            toggleChatOverlay()
                         }
                         return true
                     }
@@ -153,32 +182,90 @@ class FloatingButtonService : Service() {
         windowManager.addView(floatingView, params)
     }
 
-    private fun startPulseAnimation() {
-        pulseAnimator = ValueAnimator.ofFloat(1f, 1.1f, 1f).apply {
-            duration = 2000
-            repeatCount = ValueAnimator.INFINITE
-            interpolator = AccelerateDecelerateInterpolator()
-            addUpdateListener { animation ->
-                val scale = animation.animatedValue as Float
-                floatingView.scaleX = scale
-                floatingView.scaleY = scale
-            }
-            start()
+    // ── Chat Overlay ──
+
+    private fun toggleChatOverlay() {
+        if (isChatOpen) {
+            closeChatOverlay()
+        } else {
+            openChatOverlay()
         }
     }
 
-    private fun openChat() {
+    private fun openChatOverlay() {
+        if (isChatOpen) return
+
+        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
+
+        // Initialize chat manager on first open
+        if (chatManager == null) {
+            chatManager = OverlayChatManager(repository, messageDao, conversationDao, prefs)
+        }
+        // Always re-resolve in case the user switched chats in the main app
+        chatManager!!.ensureConversation()
+
+        val dm = resources.displayMetrics
+        val chatWidth = (dm.widthPixels * 0.92f).toInt()
+        val chatHeight = (dm.heightPixels * 0.65f).toInt()
+
+        val chatParams = WindowManager.LayoutParams(
+            chatWidth,
+            chatHeight,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        }
+
+        val composeView = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(this@FloatingButtonService)
+            setViewTreeSavedStateRegistryOwner(this@FloatingButtonService)
+            setViewTreeViewModelStoreOwner(this@FloatingButtonService)
+            setContent {
+                AndroClawTheme {
+                    OverlayChatUI(
+                        chatManager = chatManager!!,
+                        onClose = { closeChatOverlay() }
+                    )
+                }
+            }
+        }
+
+        chatOverlayView = composeView
+        windowManager.addView(composeView, chatParams)
+        isChatOpen = true
+
+        // Hide the floating button while chat is open
+        floatingView.visibility = View.GONE
+    }
+
+    private fun closeChatOverlay() {
+        if (!isChatOpen) return
+
+        chatOverlayView?.let {
+            try { windowManager.removeView(it) } catch (_: Exception) {}
+        }
+        chatOverlayView = null
+        isChatOpen = false
+
+        // Show the floating button again
+        floatingView.visibility = View.VISIBLE
+
+        lifecycleRegistry.currentState = Lifecycle.State.STARTED
+    }
+
+    private fun openFullApp() {
+        closeChatOverlay()
         val intent = Intent(this, ChatActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         startActivity(intent)
     }
 
-    private fun showQuickActions() {
-        // For quick actions, just open chat for now
-        // A full popup menu would require a more complex overlay
-        openChat()
-    }
+    // ── Utils ──
 
     private fun vibrate() {
         val vibrator = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -192,11 +279,11 @@ class FloatingButtonService : Service() {
     }
 
     override fun onDestroy() {
+        closeChatOverlay()
+        try { windowManager.removeView(floatingView) } catch (_: Exception) {}
+        lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
+        store.clear()
         super.onDestroy()
-        pulseAnimator?.cancel()
-        try {
-            windowManager.removeView(floatingView)
-        } catch (_: Exception) {}
     }
 
     companion object {

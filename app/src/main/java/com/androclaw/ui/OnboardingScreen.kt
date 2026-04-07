@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -43,12 +45,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.androclaw.ui.components.AppIcon
 
+data class FeatureItem(
+    val icon: String,
+    val text: String
+)
+
 data class OnboardingPage(
     val emoji: String? = null,
     val useAppIcon: Boolean = false,
     val title: String,
     val subtitle: String,
-    val features: List<String> = emptyList(),
+    val features: List<FeatureItem> = emptyList(),
+    val quotes: List<String> = emptyList(),
     val buttonText: String = "Continue",
     val isPermissionPage: Boolean = false,
     val permissionLabel: String? = null
@@ -58,12 +66,12 @@ val onboardingPages = listOf(
     OnboardingPage(
         useAppIcon = true,
         title = "Meet AndroClaw",
-        subtitle = "Your personal AI agent that lives on your phone. Just tell it what to do — in plain English.",
+        subtitle = "Your personal AI agent that lives on your phone. Just tell it what to do in plain English.",
         features = listOf(
-            "Call, text, and message anyone",
-            "Control your phone hands-free",
-            "Browse, search, and share anything",
-            "Works across all your apps"
+            FeatureItem("\uD83D\uDCDE", "Call & message anyone"),
+            FeatureItem("\uD83C\uDF10", "Browse & search the web"),
+            FeatureItem("\u2699\uFE0F", "Control device settings"),
+            FeatureItem("\uD83D\uDCF1", "Works across all your apps")
         ),
         buttonText = "Get Started"
     ),
@@ -95,11 +103,11 @@ val onboardingPages = listOf(
         useAppIcon = true,
         title = "You're All Set",
         subtitle = "Add your Claude API key in Settings and start commanding your phone with natural language.",
-        features = listOf(
-            "\"Call Mom\"",
-            "\"Turn off WiFi and lower brightness\"",
-            "\"Scroll through Reels for 5 minutes\"",
-            "\"Find my resume PDF and share it on WhatsApp\""
+        quotes = listOf(
+            "Call Mom",
+            "Turn off WiFi and lower brightness",
+            "Scroll through Reels for 5 minutes",
+            "Find my resume and share it on WhatsApp"
         ),
         buttonText = "Open AndroClaw"
     )
@@ -185,10 +193,40 @@ fun OnboardingScreen(
                         Spacer(modifier = Modifier.height(32.dp))
                         Column(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            p.features.forEach { feature ->
-                                FeatureRow(feature, pageIndex == onboardingPages.lastIndex)
+                            // 2-column grid
+                            p.features.chunked(2).forEach { row ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(IntrinsicSize.Max),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    row.forEach { item ->
+                                        FeatureCard(
+                                            icon = item.icon,
+                                            text = item.text,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                    // Fill empty space if odd number
+                                    if (row.size == 1) {
+                                        Spacer(modifier = Modifier.weight(1f))
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (p.quotes.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(32.dp))
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            p.quotes.forEach { quote ->
+                                QuoteChip(quote)
                             }
                         }
                     }
@@ -248,35 +286,47 @@ fun OnboardingScreen(
 }
 
 @Composable
-private fun FeatureRow(text: String, isQuote: Boolean) {
+private fun FeatureCard(icon: String, text: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(text = icon, fontSize = 28.sp)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun QuoteChip(text: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .then(
-                if (isQuote) {
-                    Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
-                } else {
-                    Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                }
-            ),
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (!isQuote) {
-            Box(
-                modifier = Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-        }
         Text(
-            text = if (isQuote) "\u201C$text\u201D" else text,
-            style = if (isQuote) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
-            color = if (isQuote) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onBackground
+            text = "\u201C",
+            style = MaterialTheme.typography.headlineMedium,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

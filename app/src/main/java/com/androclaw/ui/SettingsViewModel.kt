@@ -3,6 +3,9 @@ package com.androclaw.ui
 import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.androclaw.api.SystemPromptManager
+import com.androclaw.api.provider.ModelInfo
+import com.androclaw.api.provider.ProviderRegistry
 import com.androclaw.db.ConversationDao
 import com.androclaw.db.MessageDao
 import com.androclaw.utils.Constants
@@ -16,24 +19,80 @@ class SettingsViewModel @Inject constructor(
     @Named("encrypted") private val encryptedPrefs: SharedPreferences,
     @Named("regular") private val prefs: SharedPreferences,
     private val messageDao: MessageDao,
-    private val conversationDao: ConversationDao
+    private val conversationDao: ConversationDao,
+    val providerRegistry: ProviderRegistry,
+    val systemPromptManager: SystemPromptManager
 ) : ViewModel() {
 
-    fun getApiKey(): String =
-        encryptedPrefs.getString(Constants.PREF_API_KEY, "") ?: ""
+    // ── Provider ──
 
-    fun setApiKey(key: String) {
-        encryptedPrefs.edit().putString(Constants.PREF_API_KEY, key).apply()
+    fun getProvider(): String =
+        prefs.getString(Constants.PREF_PROVIDER, "claude") ?: "claude"
+
+    fun setProvider(providerId: String) {
+        prefs.edit().putString(Constants.PREF_PROVIDER, providerId).apply()
+        // Auto-select first model of the new provider if current model isn't in it
+        val provider = providerRegistry.getProvider(providerId) ?: return
+        val currentModel = getModel()
+        val modelExists = provider.supportedModels.any { it.id == currentModel }
+        if (!modelExists && provider.supportedModels.isNotEmpty()) {
+            setModel(provider.supportedModels.first().id)
+        }
     }
+
+    // ── API Key (per-provider) ──
+
+    fun getApiKey(): String = getApiKeyForProvider(getProvider())
+
+    fun getApiKeyForProvider(providerId: String): String =
+        encryptedPrefs.getString("api_key_$providerId", "") ?: ""
+
+    fun setApiKey(key: String) = setApiKeyForProvider(getProvider(), key)
+
+    fun setApiKeyForProvider(providerId: String, key: String) {
+        encryptedPrefs.edit().putString("api_key_$providerId", key).apply()
+        // Also keep the legacy key in sync for backward compat
+        if (providerId == getProvider()) {
+            encryptedPrefs.edit().putString(Constants.PREF_API_KEY, key).apply()
+        }
+    }
+
+    // ── GitHub Token ──
+
+    fun getGitHubToken(): String =
+        (encryptedPrefs.getString(Constants.PREF_GITHUB_TOKEN, "") ?: "").trim()
+
+    fun setGitHubToken(token: String) {
+        // Trim to defeat paste-induced whitespace/newlines from mobile keyboards.
+        encryptedPrefs.edit().putString(Constants.PREF_GITHUB_TOKEN, token.trim()).apply()
+    }
+
+    // ── Model ──
 
     fun getModel(): String {
         val saved = prefs.getString(Constants.PREF_MODEL, Constants.DEFAULT_MODEL) ?: Constants.DEFAULT_MODEL
-        return if (saved in Constants.MODEL_OPTIONS.keys) saved else Constants.DEFAULT_MODEL
+        return saved
     }
 
     fun setModel(model: String) {
         prefs.edit().putString(Constants.PREF_MODEL, model).apply()
     }
+
+    fun getModelsForCurrentProvider(): List<ModelInfo> {
+        val providerId = getProvider()
+        return providerRegistry.getProvider(providerId)?.supportedModels ?: emptyList()
+    }
+
+    // ── Streaming ──
+
+    fun isStreamingEnabled(): Boolean =
+        prefs.getBoolean(Constants.PREF_STREAMING_ENABLED, true)
+
+    fun setStreamingEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(Constants.PREF_STREAMING_ENABLED, enabled).apply()
+    }
+
+    // ── Tools ──
 
     fun getEnabledTools(): Set<String> =
         prefs.getStringSet(Constants.PREF_ENABLED_TOOLS, Constants.ALL_TOOL_NAMES.toSet())
@@ -45,12 +104,29 @@ class SettingsViewModel @Inject constructor(
         prefs.edit().putStringSet(Constants.PREF_ENABLED_TOOLS, current).apply()
     }
 
+    // ── Floating Button ──
+
     fun isFloatingButtonEnabled(): Boolean =
-        prefs.getBoolean(Constants.PREF_FLOATING_BUTTON_ENABLED, true)
+        prefs.getBoolean(Constants.PREF_FLOATING_BUTTON_ENABLED, false)
 
     fun setFloatingButtonEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(Constants.PREF_FLOATING_BUTTON_ENABLED, enabled).apply()
     }
+
+    // ── Prompt Customization ──
+
+    fun getPersona(): String = systemPromptManager.getPersona()
+    fun setPersona(text: String) = systemPromptManager.setPersona(text)
+    fun resetPersona() = systemPromptManager.resetPersona()
+    fun getDefaultPersona(): String = systemPromptManager.getDefaultPersona()
+
+    fun getUserProfile(): String = systemPromptManager.getUserProfile()
+    fun setUserProfile(text: String) = systemPromptManager.setUserProfile(text)
+
+    fun getCustomInstructions(): String = systemPromptManager.getCustomInstructions()
+    fun setCustomInstructions(text: String) = systemPromptManager.setCustomInstructions(text)
+
+    // ── Data ──
 
     fun clearHistory() {
         viewModelScope.launch {

@@ -4,8 +4,11 @@ import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.androclaw.api.AgentEvent
+import com.androclaw.api.BootstrapManager
 import com.androclaw.api.ClaudeRepository
+import com.androclaw.api.ContextUsageInfo
 import com.androclaw.api.models.Message
+import com.androclaw.tools.SkillToolHandler
 import com.androclaw.db.ConversationDao
 import com.androclaw.db.ConversationEntity
 import com.androclaw.db.MessageDao
@@ -16,6 +19,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -28,7 +32,10 @@ data class ChatUiState(
     val currentToolStatus: String? = null,
     val error: String? = null,
     val activeConversationId: Long? = null,
-    val isDrawerOpen: Boolean = false
+    val isDrawerOpen: Boolean = false,
+    val streamingText: String? = null,
+    val contextUsage: ContextUsageInfo? = null,
+    val isCompacting: Boolean = false
 )
 
 @HiltViewModel
@@ -36,7 +43,10 @@ class ChatViewModel @Inject constructor(
     private val repository: ClaudeRepository,
     private val messageDao: MessageDao,
     private val conversationDao: ConversationDao,
-    @Named("encrypted") private val encryptedPrefs: SharedPreferences
+    private val skillToolHandler: SkillToolHandler,
+    private val bootstrapManager: BootstrapManager,
+    @Named("encrypted") private val encryptedPrefs: SharedPreferences,
+    @Named("regular") private val prefs: SharedPreferences
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -62,6 +72,34 @@ class ChatViewModel @Inject constructor(
     private val conversationHistory = mutableListOf<Message>()
 
     init {
+        // Restore the shared active conversation id (synced with the floating overlay).
+        // Setting the StateFlow synchronously here means ChatScreen sees the right id
+        // on first composition and won't auto-create a duplicate "new chat".
+        val savedId = prefs.getLong(Constants.PREF_ACTIVE_CONVERSATION_ID, -1L)
+        if (savedId > 0L) {
+            _activeConversationId.value = savedId
+            _uiState.value = _uiState.value.copy(activeConversationId = savedId)
+        }
+
+        // Validate the restored id (or pick the most recent / create a new one).
+        viewModelScope.launch {
+            val current = _activeConversationId.value
+            if (current != null) {
+                val conv = conversationDao.getConversation(current)
+                if (conv == null) {
+                    // Stale pref — fall back.
+                    selectMostRecentOrCreate()
+                }
+            } else {
+                selectMostRecentOrCreate()
+            }
+        }
+
+        // Seed bundled skills on first run
+        viewModelScope.launch {
+            try { skillToolHandler.seedBundledSkills() } catch (_: Exception) {}
+        }
+
         // Observe agent events
         viewModelScope.launch {
             repository.agentEvents.collect { event ->
@@ -91,7 +129,28 @@ class ChatViewModel @Inject constructor(
                             currentToolStatus = null
                         )
                     }
-                    is AgentEvent.FinalResponse, null -> {}
+                    is AgentEvent.StreamingText -> {
+                        // Streaming text delta — update the current assistant message in-place
+                        val convId = _activeConversationId.value ?: return@collect
+                        _uiState.value = _uiState.value.copy(
+                            currentToolStatus = null,
+                            streamingText = (_uiState.value.streamingText ?: "") + event.delta
+                        )
+                    }
+                    is AgentEvent.FinalResponse -> {
+                        // Clear streaming buffer
+                        _uiState.value = _uiState.value.copy(streamingText = null, isCompacting = false)
+                    }
+                    is AgentEvent.ContextUpdate -> {
+                        _uiState.value = _uiState.value.copy(contextUsage = event.info)
+                    }
+                    is AgentEvent.Compacting -> {
+                        _uiState.value = _uiState.value.copy(
+                            isCompacting = true,
+                            currentToolStatus = event.message
+                        )
+                    }
+                    null -> {}
                 }
             }
         }
@@ -107,6 +166,11 @@ class ChatViewModel @Inject constructor(
             val conversation = ConversationEntity()
             val id = conversationDao.insert(conversation)
             switchToConversation(id)
+
+            // First-run bootstrap intentionally disabled — start with an empty chat.
+            if (bootstrapManager.shouldRunBootstrap()) {
+                bootstrapManager.markBootstrapDone()
+            }
         }
     }
 
@@ -119,8 +183,25 @@ class ChatViewModel @Inject constructor(
             currentToolStatus = null,
             error = null
         )
+        // Persist so the overlay (and next launch) lands on the same chat.
+        prefs.edit().putLong(Constants.PREF_ACTIVE_CONVERSATION_ID, conversationId).apply()
         // Reset API conversation history — we rebuild from DB on send
         conversationHistory.clear()
+    }
+
+    private suspend fun selectMostRecentOrCreate() {
+        // Pick the most recently updated conversation if one exists, otherwise create.
+        val recent = try {
+            conversationDao.getAllConversations().first()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val pick = recent.firstOrNull()
+        if (pick != null) {
+            switchToConversation(pick.id)
+        } else {
+            startNewConversation()
+        }
     }
 
     fun deleteConversation(conversationId: Long) {
@@ -185,7 +266,12 @@ class ChatViewModel @Inject constructor(
                 rebuildHistory(convId)
             }
 
-            val result = repository.sendMessage(conversationHistory, text)
+            // Check for slash command skills
+            val resolvedText = if (text.startsWith("/")) {
+                skillToolHandler.resolveSlashCommand(text) ?: text
+            } else text
+
+            val result = repository.sendMessage(conversationHistory, resolvedText)
 
             result.fold(
                 onSuccess = { response ->

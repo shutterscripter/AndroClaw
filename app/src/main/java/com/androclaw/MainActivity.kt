@@ -6,6 +6,7 @@ import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -87,14 +88,32 @@ class MainActivity : ComponentActivity() {
                 permissionLauncher.launch(perms.toTypedArray())
             }
             "storage" -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    permissionLauncher.launch(
-                        arrayOf(
-                            Manifest.permission.READ_MEDIA_IMAGES,
-                            Manifest.permission.READ_MEDIA_VIDEO,
-                            Manifest.permission.READ_MEDIA_AUDIO
+                // Request All Files Access on Android 11+ for full file system access (PDFs, docs, etc.)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    if (!Environment.isExternalStorageManager()) {
+                        try {
+                            startActivity(
+                                Intent(
+                                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                    Uri.parse("package:$packageName")
+                                )
+                            )
+                        } catch (_: Exception) {
+                            startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                        }
+                    }
+                    // Also request media permissions for MediaStore queries
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        permissionLauncher.launch(
+                            arrayOf(
+                                Manifest.permission.READ_MEDIA_IMAGES,
+                                Manifest.permission.READ_MEDIA_VIDEO,
+                                Manifest.permission.READ_MEDIA_AUDIO
+                            )
                         )
-                    )
+                    } else {
+                        advancePage()
+                    }
                 } else {
                     permissionLauncher.launch(
                         arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
@@ -117,7 +136,7 @@ class MainActivity : ComponentActivity() {
 
     private fun navigateToChat() {
         startActivity(Intent(this, ChatActivity::class.java))
-        if (prefs.getBoolean(Constants.PREF_FLOATING_BUTTON_ENABLED, true) &&
+        if (prefs.getBoolean(Constants.PREF_FLOATING_BUTTON_ENABLED, false) &&
             Settings.canDrawOverlays(this)
         ) {
             FloatingButtonService.start(this)

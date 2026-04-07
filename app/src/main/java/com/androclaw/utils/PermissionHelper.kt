@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Environment
 import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -37,7 +38,19 @@ class PermissionHelper @Inject constructor() {
     fun hasMicrophonePermission(context: Context): Boolean =
         hasPermission(context, Manifest.permission.RECORD_AUDIO)
 
+    fun hasAllFilesAccess(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            true // Not needed below Android 11
+        }
+    }
+
     fun hasStoragePermission(context: Context): Boolean {
+        // All Files Access gives full storage permission on Android 11+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) {
+            return true
+        }
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             hasPermission(context, Manifest.permission.READ_MEDIA_IMAGES) ||
                     hasPermission(context, Manifest.permission.READ_MEDIA_VIDEO) ||
@@ -74,6 +87,12 @@ class PermissionHelper @Inject constructor() {
                 Manifest.permission.READ_CALENDAR,
                 Manifest.permission.WRITE_CALENDAR
             )
+            "read_sms" -> listOf(Manifest.permission.READ_SMS)
+            "call_log" -> listOf(Manifest.permission.READ_CALL_LOG)
+            "get_location" -> listOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
             "toggle_setting" -> listOf(Manifest.permission.BLUETOOTH_CONNECT)
             "file_manager" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 listOf(
@@ -105,8 +124,16 @@ class PermissionHelper @Inject constructor() {
         val missing = getMissingPermissions(context, toolName)
         if (missing.isEmpty()) return null // All good
 
-        // Request permissions via the Activity bridge
-        val results = RuntimePermissionManager.request(missing, toolName)
+        // Request permissions via the Activity bridge, with timeout to prevent ANR
+        val results = try {
+            kotlinx.coroutines.withTimeout(5000) {
+                RuntimePermissionManager.request(missing, toolName)
+            }
+        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+            // Activity not available to show dialog — return guidance
+            val permNames = missing.map { it.substringAfterLast('.').lowercase().replace('_', ' ') }
+            return "Permission needed: ${permNames.joinToString(", ")}. Please open AndroClaw's main app to grant permissions, or go to Android Settings → Apps → AndroClaw → Permissions."
+        }
 
         // Check if all were granted
         val stillMissing = missing.filter { results[it] != true }
@@ -128,12 +155,16 @@ class PermissionHelper @Inject constructor() {
         fun getAllRuntimePermissions(): Array<String> {
             val perms = mutableListOf(
                 Manifest.permission.SEND_SMS,
+                Manifest.permission.READ_SMS,
                 Manifest.permission.CALL_PHONE,
+                Manifest.permission.READ_CALL_LOG,
                 Manifest.permission.READ_CONTACTS,
                 Manifest.permission.READ_CALENDAR,
                 Manifest.permission.WRITE_CALENDAR,
                 Manifest.permission.RECORD_AUDIO,
-                Manifest.permission.BLUETOOTH_CONNECT
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 perms.add(Manifest.permission.POST_NOTIFICATIONS)

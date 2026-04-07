@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -69,12 +70,8 @@ fun ChatScreen(
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
 
-    // Auto-create first conversation
-    LaunchedEffect(Unit) {
-        if (uiState.activeConversationId == null) {
-            viewModel.startNewConversation()
-        }
-    }
+    // ChatViewModel.init handles restoring the shared active conversation
+    // (synced with the floating overlay) or creating a fresh one if none exist.
 
     // Auto-scroll to bottom
     LaunchedEffect(messages.size) {
@@ -100,12 +97,24 @@ fun ChatScreen(
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
                                 Text(
-                                    text = if (uiState.isLoading) "Thinking..." else "Online",
+                                    text = when {
+                                        uiState.isCompacting -> "Compacting..."
+                                        uiState.isLoading -> "Thinking..."
+                                        else -> buildString {
+                                            append("Online")
+                                            uiState.contextUsage?.let {
+                                                append(" · ${it.usagePercent}% context")
+                                            }
+                                        }
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (uiState.isLoading)
-                                        MaterialTheme.colorScheme.primary
-                                    else
-                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    color = when {
+                                        uiState.isCompacting -> MaterialTheme.colorScheme.tertiary
+                                        uiState.isLoading -> MaterialTheme.colorScheme.primary
+                                        uiState.contextUsage?.isNearLimit == true ->
+                                            MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    }
                                 )
                             }
                         }
