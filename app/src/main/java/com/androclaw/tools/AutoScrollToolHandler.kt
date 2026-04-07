@@ -2,6 +2,7 @@ package com.androclaw.tools
 
 import android.content.Context
 import android.content.Intent
+import android.view.accessibility.AccessibilityNodeInfo
 import com.androclaw.service.AndroClawAccessibilityService
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
@@ -14,15 +15,21 @@ class AutoScrollToolHandler @Inject constructor(
     private val appCache: AppCacheManager
 ) {
     // Known feed entry points
+    // navTab = accessibility content-description of the bottom nav tab to tap after launch
     private val feedApps = mapOf(
-        "instagram_reels" to FeedConfig("com.instagram.android", "instagram://reels_tab/", "Instagram Reels"),
+        "instagram_reels" to FeedConfig("com.instagram.android", null, "Instagram Reels", navTab = "Reels"),
+        "instagram reels" to FeedConfig("com.instagram.android", null, "Instagram Reels", navTab = "Reels"),
+        "reels" to FeedConfig("com.instagram.android", null, "Instagram Reels", navTab = "Reels"),
         "instagram" to FeedConfig("com.instagram.android", null, "Instagram"),
-        "youtube_shorts" to FeedConfig("com.google.android.youtube", "https://www.youtube.com/shorts/", "YouTube Shorts"),
+        "youtube_shorts" to FeedConfig("com.google.android.youtube", null, "YouTube Shorts", navTab = "Shorts"),
+        "youtube shorts" to FeedConfig("com.google.android.youtube", null, "YouTube Shorts", navTab = "Shorts"),
+        "shorts" to FeedConfig("com.google.android.youtube", null, "YouTube Shorts", navTab = "Shorts"),
         "youtube" to FeedConfig("com.google.android.youtube", null, "YouTube"),
         "tiktok" to FeedConfig("com.zhiliaoapp.musically", null, "TikTok"),
         "snapchat_spotlight" to FeedConfig("com.snapchat.android", null, "Snapchat Spotlight"),
         "snapchat" to FeedConfig("com.snapchat.android", null, "Snapchat"),
-        "facebook_reels" to FeedConfig("com.facebook.katana", null, "Facebook Reels"),
+        "facebook_reels" to FeedConfig("com.facebook.katana", null, "Facebook Reels", navTab = "Reels"),
+        "facebook reels" to FeedConfig("com.facebook.katana", null, "Facebook Reels", navTab = "Reels"),
         "facebook" to FeedConfig("com.facebook.katana", null, "Facebook"),
         "reddit" to FeedConfig("com.reddit.frontpage", null, "Reddit"),
         "twitter" to FeedConfig("com.twitter.android", null, "Twitter/X"),
@@ -58,8 +65,8 @@ class AutoScrollToolHandler @Inject constructor(
             if (openResult.contains("not installed") || openResult.contains("not found")) {
                 return openResult
             }
-            // Wait for app to load
-            delay(2000)
+            // Wait for feed content to load after tab navigation
+            delay(1500)
         }
 
         // Start auto-scrolling
@@ -125,15 +132,18 @@ class AutoScrollToolHandler @Inject constructor(
     }
 
     private suspend fun openFeedApp(appKey: String): String {
-        // Try known feed configs first
+        // Try exact match first
         val config = feedApps[appKey]
         if (config != null) {
             return launchFeedApp(config)
         }
 
-        // Try fuzzy matching against known feeds
+        // Try fuzzy matching — match "instagram reels" to "instagram_reels", "reels" to "instagram_reels" etc.
+        val normalized = appKey.replace("_", " ").trim()
         for ((key, cfg) in feedApps) {
-            if (key.contains(appKey) || appKey.contains(key.split("_").first())) {
+            val keyNorm = key.replace("_", " ")
+            if (keyNorm.contains(normalized) || normalized.contains(keyNorm) ||
+                keyNorm.split(" ").first() == normalized.split(" ").first()) {
                 return launchFeedApp(cfg)
             }
         }
@@ -153,30 +163,99 @@ class AutoScrollToolHandler @Inject constructor(
         return "App \"$appKey\" not found or not installed."
     }
 
-    private fun launchFeedApp(config: FeedConfig): String {
+    private suspend fun launchFeedApp(config: FeedConfig): String {
         return try {
-            if (config.deepLink != null) {
-                // Try deep link to reels/shorts section directly
-                try {
-                    val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(config.deepLink)).apply {
-                        `package` = config.packageName
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(intent)
-                    return "Opened ${config.displayName} via deep link."
-                } catch (e: Exception) {
-                    // Fall through to regular launch
-                }
-            }
-
             val intent = context.packageManager.getLaunchIntentForPackage(config.packageName)
                 ?: return "${config.displayName} is not installed."
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
-            "Opened ${config.displayName}."
+
+            // If this feed has a specific tab to navigate to (Reels, Shorts, etc.)
+            if (config.navTab != null) {
+                delay(2500) // Wait for app to fully load
+                val navigated = navigateToTab(config.navTab)
+                if (navigated) {
+                    "Opened ${config.displayName} and navigated to ${config.navTab} tab."
+                } else {
+                    "Opened ${config.displayName} but could not find the ${config.navTab} tab automatically. The app may need to be on the main screen."
+                }
+            } else {
+                "Opened ${config.displayName}."
+            }
         } catch (e: Exception) {
             "Failed to open ${config.displayName}: ${e.message}"
         }
+    }
+
+    /**
+     * Navigate to a specific tab (Reels, Shorts, etc.) in the bottom nav bar
+     * by finding and tapping the element matching the tab's content description.
+     */
+    private fun navigateToTab(tabName: String): Boolean {
+        val service = AndroClawAccessibilityService.instance ?: return false
+        val root = service.rootInActiveWindow ?: return false
+
+        // Strategy 1: Find by content description (most reliable for nav tabs)
+        val nodeByDesc = findNodeByContentDescription(root, tabName)
+        if (nodeByDesc != null) {
+            return clickNode(nodeByDesc)
+        }
+
+        // Strategy 2: Find by text
+        val nodesByText = root.findAccessibilityNodeInfosByText(tabName)
+        if (!nodesByText.isNullOrEmpty()) {
+            return clickNode(nodesByText.first())
+        }
+
+        // Strategy 3: Try common variations
+        val variations = when (tabName) {
+            "Reels" -> listOf("Reels", "reels", "Reels Tab", "reel")
+            "Shorts" -> listOf("Shorts", "shorts", "Shorts Tab")
+            else -> listOf(tabName)
+        }
+        for (variant in variations) {
+            val nodes = root.findAccessibilityNodeInfosByText(variant)
+            if (!nodes.isNullOrEmpty()) {
+                return clickNode(nodes.first())
+            }
+            val descNode = findNodeByContentDescription(root, variant)
+            if (descNode != null) {
+                return clickNode(descNode)
+            }
+        }
+
+        return false
+    }
+
+    private fun findNodeByContentDescription(
+        node: AccessibilityNodeInfo,
+        description: String
+    ): AccessibilityNodeInfo? {
+        val desc = node.contentDescription?.toString() ?: ""
+        if (desc.equals(description, ignoreCase = true) || desc.contains(description, ignoreCase = true)) {
+            return node
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findNodeByContentDescription(child, description)
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun clickNode(node: AccessibilityNodeInfo): Boolean {
+        if (node.isClickable) {
+            return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
+        // Walk up to find a clickable parent
+        var parent = node.parent
+        while (parent != null) {
+            if (parent.isClickable) {
+                return parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            }
+            parent = parent.parent
+        }
+        return false
     }
 
     private fun resolveAppName(key: String): String {
@@ -186,6 +265,7 @@ class AutoScrollToolHandler @Inject constructor(
     private data class FeedConfig(
         val packageName: String,
         val deepLink: String?,
-        val displayName: String
+        val displayName: String,
+        val navTab: String? = null
     )
 }

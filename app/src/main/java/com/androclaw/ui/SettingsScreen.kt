@@ -23,9 +23,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Accessibility
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.SmartToy
+import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -35,6 +39,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -110,20 +115,91 @@ fun SettingsScreen(
         ) {
             Spacer(modifier = Modifier.height(4.dp))
 
-            // ── API Key ──
-            SettingsSection(title = "API Configuration", icon = Icons.Outlined.Key) {
-                var apiKey by remember { mutableStateOf(viewModel.getApiKey()) }
+            // ── LLM Provider ──
+            SettingsSection(title = "LLM Provider", icon = Icons.Outlined.Cloud) {
+                var providerExpanded by remember { mutableStateOf(false) }
+                var currentProvider by remember { mutableStateOf(viewModel.getProvider()) }
+                val allProviders = viewModel.providerRegistry.getAllProviders()
+                val providerObj = viewModel.providerRegistry.getProvider(currentProvider)
+
+                ExposedDropdownMenuBox(
+                    expanded = providerExpanded,
+                    onExpandedChange = { providerExpanded = it }
+                ) {
+                    OutlinedTextField(
+                        value = providerObj?.displayName ?: currentProvider,
+                        onValueChange = {},
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                        readOnly = true,
+                        label = { Text("Provider") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(providerExpanded) },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = providerExpanded,
+                        onDismissRequest = { providerExpanded = false }
+                    ) {
+                        allProviders.forEach { provider ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(provider.displayName, style = MaterialTheme.typography.bodyLarge)
+                                        Text(
+                                            "${provider.supportedModels.size} models" +
+                                                if (provider.supportsStreaming) " | Streaming" else "" +
+                                                if (provider.supportsTools) " | Tools" else "",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    currentProvider = provider.id
+                                    viewModel.setProvider(provider.id)
+                                    providerExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ── API Key (per provider) ──
+            SettingsSection(title = "API Key", icon = Icons.Outlined.Key) {
+                var currentProvider by remember { mutableStateOf(viewModel.getProvider()) }
+                // Re-read when provider changes
+                currentProvider = viewModel.getProvider()
+                val providerObj = viewModel.providerRegistry.getProvider(currentProvider)
+                var apiKey by remember(currentProvider) { mutableStateOf(viewModel.getApiKeyForProvider(currentProvider)) }
                 var showKey by remember { mutableStateOf(false) }
+
+                val placeholder = when (currentProvider) {
+                    "claude" -> "sk-ant-api03-..."
+                    "openai" -> "sk-..."
+                    "gemini" -> "AIza..."
+                    "groq" -> "gsk_..."
+                    "openrouter" -> "sk-or-v1-..."
+                    else -> "Enter API key..."
+                }
+
+                Text(
+                    text = "API key for ${providerObj?.displayName ?: currentProvider}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
 
                 OutlinedTextField(
                     value = apiKey,
                     onValueChange = {
                         apiKey = it
-                        viewModel.setApiKey(it)
+                        viewModel.setApiKeyForProvider(currentProvider, it)
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Claude API Key") },
-                    placeholder = { Text("sk-ant-api03-...") },
+                    placeholder = { Text(placeholder) },
                     visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { showKey = !showKey }) {
@@ -143,18 +219,84 @@ fun SettingsScreen(
                 )
             }
 
-            // ── Model Selection ──
+            // ── GitHub Token ──
+            SettingsSection(title = "GitHub", icon = Icons.Outlined.Key) {
+                // Don't mask by default — the field is already only visible inside Settings,
+                // and masking has been hiding the fact that paste isn't being captured.
+                var ghToken by remember { mutableStateOf(viewModel.getGitHubToken()) }
+                var savedLen by remember { mutableStateOf(viewModel.getGitHubToken().length) }
+                var showGhToken by remember { mutableStateOf(true) }
+
+                Text(
+                    text = "Personal Access Token (classic or fine-grained). Used by the github tool for PRs, issues, CI, file edits, and more.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = ghToken,
+                    onValueChange = { ghToken = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("ghp_... or github_pat_...") },
+                    visualTransformation = if (showGhToken) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showGhToken = !showGhToken }) {
+                            Icon(
+                                imageVector = if (showGhToken) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                contentDescription = "Toggle visibility",
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Accent,
+                        cursorColor = Accent
+                    )
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(
+                        onClick = {
+                            viewModel.setGitHubToken(ghToken)
+                            savedLen = viewModel.getGitHubToken().length
+                        }
+                    ) { Text("Save") }
+                    TextButton(
+                        onClick = {
+                            ghToken = ""
+                            viewModel.setGitHubToken("")
+                            savedLen = 0
+                        }
+                    ) { Text("Clear") }
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = if (savedLen > 0) "Saved ($savedLen chars)" else "Not saved",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (savedLen > 0) Accent else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // ── Model Selection (dynamic per provider) ──
             SettingsSection(title = "Model", icon = Icons.Outlined.SmartToy) {
                 var expanded by remember { mutableStateOf(false) }
+                val models = viewModel.getModelsForCurrentProvider()
                 val currentModel = viewModel.getModel()
-                val modelName = Constants.MODEL_OPTIONS[currentModel] ?: currentModel
+                val currentModelInfo = models.find { it.id == currentModel }
 
                 ExposedDropdownMenuBox(
                     expanded = expanded,
                     onExpandedChange = { expanded = it }
                 ) {
                     OutlinedTextField(
-                        value = modelName,
+                        value = currentModelInfo?.displayName ?: currentModel,
                         onValueChange = {},
                         modifier = Modifier
                             .fillMaxWidth()
@@ -162,28 +304,32 @@ fun SettingsScreen(
                         readOnly = true,
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                         shape = RoundedCornerShape(14.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Accent
-                        )
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent)
                     )
                     ExposedDropdownMenu(
                         expanded = expanded,
                         onDismissRequest = { expanded = false }
                     ) {
-                        Constants.MODEL_OPTIONS.forEach { (modelId, displayName) ->
+                        models.forEach { model ->
                             DropdownMenuItem(
                                 text = {
                                     Column {
-                                        Text(displayName, style = MaterialTheme.typography.bodyLarge)
+                                        Text(model.displayName, style = MaterialTheme.typography.bodyLarge)
                                         Text(
-                                            modelId,
+                                            buildString {
+                                                append(model.id)
+                                                if (model.contextWindow > 0) {
+                                                    append(" | ${model.contextWindow / 1000}k ctx")
+                                                }
+                                                if (model.supportsVision) append(" | Vision")
+                                            },
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 },
                                 onClick = {
-                                    viewModel.setModel(modelId)
+                                    viewModel.setModel(model.id)
                                     expanded = false
                                 }
                             )
@@ -192,13 +338,141 @@ fun SettingsScreen(
                 }
             }
 
+            // ── Streaming ──
+            SettingsSection(title = "Streaming", icon = Icons.Outlined.Speed) {
+                SettingsToggleRow(
+                    title = "Stream responses",
+                    subtitle = "Show tokens as they arrive (real-time output)",
+                    checked = viewModel.isStreamingEnabled(),
+                    onCheckedChange = { viewModel.setStreamingEnabled(it) }
+                )
+            }
+
+            // ── Persona ──
+            SettingsSection(title = "Persona", icon = Icons.Outlined.SmartToy) {
+                Text(
+                    text = "Customize how AndroClaw behaves and communicates. Leave blank for default.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                var persona by remember { mutableStateOf(viewModel.getPersona()) }
+                val isDefault = persona == viewModel.getDefaultPersona()
+
+                OutlinedTextField(
+                    value = persona,
+                    onValueChange = {
+                        persona = it
+                        viewModel.setPersona(it)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("e.g. Be brief and casual. Use humor.") },
+                    minLines = 3,
+                    maxLines = 6,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Accent,
+                        cursorColor = Accent
+                    )
+                )
+
+                if (!isDefault) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(onClick = {
+                        viewModel.resetPersona()
+                        persona = viewModel.getPersona()
+                    }) {
+                        Text("Reset to default", color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+
+            // ── User Profile ──
+            SettingsSection(title = "About You", icon = Icons.Outlined.Person) {
+                Text(
+                    text = "Tell AndroClaw about yourself so it can personalize responses. This is injected into every conversation.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                var userProfile by remember { mutableStateOf(viewModel.getUserProfile()) }
+
+                OutlinedTextField(
+                    value = userProfile,
+                    onValueChange = {
+                        userProfile = it
+                        viewModel.setUserProfile(it)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("e.g. My name is Alex. I work as a designer. I live in NYC. My partner's name is Sam.") },
+                    minLines = 3,
+                    maxLines = 6,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Accent,
+                        cursorColor = Accent
+                    )
+                )
+            }
+
+            // ── Custom Instructions ──
+            SettingsSection(title = "Custom Instructions", icon = Icons.Outlined.Edit) {
+                Text(
+                    text = "Standing orders that AndroClaw always follows. Like OpenClaw's AGENTS.md.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                var instructions by remember { mutableStateOf(viewModel.getCustomInstructions()) }
+
+                OutlinedTextField(
+                    value = instructions,
+                    onValueChange = {
+                        instructions = it
+                        viewModel.setCustomInstructions(it)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("e.g. Always check my calendar before suggesting meeting times. Respond in Spanish when I write in Spanish.") },
+                    minLines = 3,
+                    maxLines = 6,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Accent,
+                        cursorColor = Accent
+                    )
+                )
+            }
+
             // ── Floating Button ──
             SettingsSection(title = "Floating Assistant", icon = Icons.Outlined.ChatBubbleOutline) {
+                var floatingEnabled by remember { mutableStateOf(viewModel.isFloatingButtonEnabled()) }
                 SettingsToggleRow(
                     title = "Floating button overlay",
                     subtitle = "Quick access from any app",
-                    checked = viewModel.isFloatingButtonEnabled(),
-                    onCheckedChange = { viewModel.setFloatingButtonEnabled(it) }
+                    checked = floatingEnabled,
+                    onCheckedChange = { wantOn ->
+                        if (wantOn) {
+                            if (!android.provider.Settings.canDrawOverlays(context)) {
+                                context.startActivity(
+                                    Intent(
+                                        android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                        android.net.Uri.parse("package:${context.packageName}")
+                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                                return@SettingsToggleRow
+                            }
+                            floatingEnabled = true
+                            viewModel.setFloatingButtonEnabled(true)
+                            com.androclaw.service.FloatingButtonService.start(context)
+                        } else {
+                            floatingEnabled = false
+                            viewModel.setFloatingButtonEnabled(false)
+                            com.androclaw.service.FloatingButtonService.stop(context)
+                        }
+                    }
                 )
             }
 
@@ -245,11 +519,11 @@ fun SettingsScreen(
             SettingsSection(title = "Enabled Tools") {
                 val enabledTools = viewModel.getEnabledTools()
                 val toolGroups = mapOf(
-                    "Communication" to listOf("send_sms", "make_phone_call", "send_whatsapp", "send_email", "get_contacts"),
-                    "Apps & Web" to listOf("open_app", "list_apps", "browse_web"),
-                    "Device" to listOf("toggle_setting", "brightness_control", "media_control", "device_info"),
-                    "Productivity" to listOf("create_calendar_event", "set_reminder", "set_alarm", "clipboard", "file_manager"),
-                    "Advanced" to listOf("take_screenshot", "share_content", "notifications", "auto_scroll_feed", "control_app_ui")
+                    "Communication" to listOf("send_sms", "read_sms", "make_phone_call", "call_log", "send_whatsapp", "send_email", "get_contacts"),
+                    "Apps & Web" to listOf("open_app", "list_apps", "browse_web", "web_search", "web_fetch"),
+                    "Device" to listOf("toggle_setting", "brightness_control", "media_control", "device_info", "get_location"),
+                    "Productivity" to listOf("create_calendar_event", "set_reminder", "set_alarm", "clipboard", "file_manager", "notes", "memory"),
+                    "Advanced" to listOf("take_screenshot", "share_content", "notifications", "auto_scroll_feed", "control_app_ui", "text_to_speech", "skills", "screen_time", "schedule")
                 )
 
                 toolGroups.forEach { (groupName, tools) ->

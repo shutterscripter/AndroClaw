@@ -29,7 +29,19 @@ object ToolDefinitions {
             deviceInfo(),
             notifications(),
             autoScrollFeed(),
-            controlAppUi()
+            controlAppUi(),
+            webSearch(),
+            webFetch(),
+            memory(),
+            readSms(),
+            callLog(),
+            getLocation(),
+            notes(),
+            textToSpeech(),
+            skills(),
+            screenTime(),
+            schedule(),
+            github()
         )
         return if (enabledTools != null) {
             all.filter { it.name in enabledTools }
@@ -64,13 +76,15 @@ object ToolDefinitions {
 
     private fun sendWhatsApp() = ToolDefinition(
         name = "send_whatsapp",
-        description = "Send a WhatsApp message to a contact by name.",
+        description = "Send a WhatsApp message or file to a contact or group by name. Can send text messages, files (PDFs, images, videos, documents), or both (file with caption). For groups, use group_name instead of contact_name.",
         inputSchema = InputSchema(
             properties = mapOf(
-                "contact_name" to PropertySchema(type = "string", description = "Name of the contact"),
-                "message" to PropertySchema(type = "string", description = "Message to send")
-            ),
-            required = listOf("contact_name", "message")
+                "contact_name" to PropertySchema(type = "string", description = "Name of the contact (for individual chats)"),
+                "group_name" to PropertySchema(type = "string", description = "Name of the WhatsApp group (for group chats)"),
+                "message" to PropertySchema(type = "string", description = "Text message to send, or caption when sending a file"),
+                "file_path" to PropertySchema(type = "string", description = "Full path of the file to send (e.g. /storage/emulated/0/Download/report.pdf)"),
+                "file_name" to PropertySchema(type = "string", description = "File name to search for and send (if you don't have the full path)")
+            )
         )
     )
 
@@ -225,20 +239,27 @@ object ToolDefinitions {
 
     private fun fileManager() = ToolDefinition(
         name = "file_manager",
-        description = "Find, open, share, or browse files on the device. Can search by name and type (image, video, document, pdf, audio), list directory contents, view recent files, get file info, or share/send files to other apps or contacts.",
+        description = "Explore, read, and manage files on the device. Actions: find (search by name/type), open, share, list (directory contents), info, recent, read (view file content with line numbers), tree (directory structure), grep (search inside file contents by text/regex), glob (find files by pattern like '*.pdf' or '**/*.kt').",
         inputSchema = InputSchema(
             properties = mapOf(
                 "action" to PropertySchema(
                     type = "string",
                     description = "File action",
-                    enum = listOf("find", "open", "share", "list", "info", "recent")
+                    enum = listOf("find", "open", "share", "list", "info", "recent", "read", "tree", "grep", "glob")
                 ),
                 "query" to PropertySchema(type = "string", description = "Search query (for 'find' action)"),
-                "path" to PropertySchema(type = "string", description = "File path (for 'open', 'share', 'info' actions)"),
+                "path" to PropertySchema(type = "string", description = "File path (for 'open', 'share', 'info', 'read' actions)"),
                 "file_type" to PropertySchema(type = "string", description = "Filter by type: image, video, audio, document, pdf"),
-                "directory" to PropertySchema(type = "string", description = "Directory path (for 'list' action)"),
+                "directory" to PropertySchema(type = "string", description = "Directory path (for 'list', 'tree', 'grep', 'glob' actions)"),
                 "target_app" to PropertySchema(type = "string", description = "Target app package name (for 'share' action)"),
-                "max_results" to PropertySchema(type = "number", description = "Max results to return")
+                "max_results" to PropertySchema(type = "number", description = "Max results to return"),
+                "pattern" to PropertySchema(type = "string", description = "Glob pattern (for 'glob', e.g. '*.pdf') or text/regex (for 'grep')"),
+                "offset" to PropertySchema(type = "number", description = "Line offset to start reading from (for 'read', default 0)"),
+                "limit" to PropertySchema(type = "number", description = "Number of lines to read (for 'read', default 200)"),
+                "max_depth" to PropertySchema(type = "number", description = "Max directory depth (for 'tree', default 3)"),
+                "show_hidden" to PropertySchema(type = "boolean", description = "Show hidden files/dirs (for 'tree', default false)"),
+                "case_sensitive" to PropertySchema(type = "boolean", description = "Case-sensitive search (for 'grep', default false)"),
+                "context_lines" to PropertySchema(type = "number", description = "Lines of context around matches (for 'grep', default 0)")
             ),
             required = listOf("action")
         )
@@ -301,10 +322,11 @@ object ToolDefinitions {
 
     private fun takeScreenshot() = ToolDefinition(
         name = "take_screenshot",
-        description = "Take a screenshot of the current screen. Requires accessibility service to be enabled.",
+        description = "Take a screenshot of the current screen. With analyze=true, captures the screen and sends it for visual analysis so you can describe what's on screen. Requires accessibility service.",
         inputSchema = InputSchema(
             properties = mapOf(
-                "delay_ms" to PropertySchema(type = "number", description = "Optional delay in milliseconds before taking screenshot")
+                "delay_ms" to PropertySchema(type = "number", description = "Optional delay in milliseconds before taking screenshot"),
+                "analyze" to PropertySchema(type = "boolean", description = "If true, capture and analyze the screenshot content (Android 11+). Default false.")
             )
         )
     )
@@ -330,14 +352,16 @@ object ToolDefinitions {
 
     private fun notifications() = ToolDefinition(
         name = "notifications",
-        description = "Open the notification panel, dismiss notifications, or open notification settings.",
+        description = "Read, open, or manage notifications. Use 'read' to get actual notification content (titles, messages, app names). Use 'show' to open the panel, 'clear' to dismiss.",
         inputSchema = InputSchema(
             properties = mapOf(
                 "action" to PropertySchema(
                     type = "string",
                     description = "Notification action",
-                    enum = listOf("show", "clear", "settings")
-                )
+                    enum = listOf("show", "clear", "settings", "read")
+                ),
+                "app" to PropertySchema(type = "string", description = "Filter notifications by app name (for 'read')"),
+                "count" to PropertySchema(type = "number", description = "Max notifications to return (for 'read', default 20)")
             ),
             required = listOf("action")
         )
@@ -367,6 +391,208 @@ object ToolDefinitions {
         )
     )
 
+    // --- Web Intelligence ---
+
+    private fun webSearch() = ToolDefinition(
+        name = "web_search",
+        description = "Search the web and return actual text results. Use this to answer factual questions, look up current information, find news, or research topics. Returns titles, snippets, and URLs.",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "query" to PropertySchema(type = "string", description = "The search query"),
+                "max_results" to PropertySchema(type = "number", description = "Max results to return (default 5)")
+            ),
+            required = listOf("query")
+        )
+    )
+
+    private fun webFetch() = ToolDefinition(
+        name = "web_fetch",
+        description = "Fetch and read the content of a webpage URL. Extracts readable text, strips navigation/ads. Use after web_search to read a specific result, or to read any URL the user provides.",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "url" to PropertySchema(type = "string", description = "The URL to fetch"),
+                "extract_mode" to PropertySchema(
+                    type = "string",
+                    description = "What to extract",
+                    enum = listOf("text", "links", "metadata")
+                )
+            ),
+            required = listOf("url")
+        )
+    )
+
+    // --- Memory ---
+
+    private fun memory() = ToolDefinition(
+        name = "memory",
+        description = "Save and recall typed information across conversations. Memories persist even after the conversation ends. Use types to categorize: 'user_profile' for user info (name, role), 'preference' for how the user likes things done, 'fact' for general knowledge, 'instruction' for standing orders to always follow, 'reference' for external links/resources.",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "action" to PropertySchema(
+                    type = "string",
+                    description = "Memory action",
+                    enum = listOf("save", "recall", "list", "delete", "search", "clear_category", "by_type")
+                ),
+                "key" to PropertySchema(type = "string", description = "Short label for the memory (for save/recall/delete)"),
+                "value" to PropertySchema(type = "string", description = "Content to remember (for save)"),
+                "query" to PropertySchema(type = "string", description = "Search query (for recall/search)"),
+                "category" to PropertySchema(type = "string", description = "Category to organize memories (default: general)"),
+                "type" to PropertySchema(
+                    type = "string",
+                    description = "Memory type — determines how it's used in the system prompt",
+                    enum = listOf("user_profile", "preference", "fact", "instruction", "reference")
+                )
+            ),
+            required = listOf("action")
+        )
+    )
+
+    // --- SMS Reading ---
+
+    private fun readSms() = ToolDefinition(
+        name = "read_sms",
+        description = "Read SMS message history. Search by contact name, phone number, or message content. Shows received and sent messages with timestamps.",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "contact_name" to PropertySchema(type = "string", description = "Filter by contact name"),
+                "phone_number" to PropertySchema(type = "string", description = "Filter by phone number"),
+                "query" to PropertySchema(type = "string", description = "Search message content"),
+                "count" to PropertySchema(type = "number", description = "Number of messages to return (default 10)"),
+                "folder" to PropertySchema(
+                    type = "string",
+                    description = "Which folder to read",
+                    enum = listOf("all", "inbox", "sent")
+                )
+            )
+        )
+    )
+
+    // --- Call Log ---
+
+    private fun callLog() = ToolDefinition(
+        name = "call_log",
+        description = "Read call history — missed, incoming, outgoing calls. Shows contact name, call type, duration, and time.",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "contact_name" to PropertySchema(type = "string", description = "Filter by contact name"),
+                "type" to PropertySchema(
+                    type = "string",
+                    description = "Call type filter",
+                    enum = listOf("all", "missed", "incoming", "outgoing", "rejected")
+                ),
+                "count" to PropertySchema(type = "number", description = "Number of entries to return (default 15)"),
+                "days" to PropertySchema(type = "number", description = "Only show calls from last N days")
+            )
+        )
+    )
+
+    // --- Location ---
+
+    private fun getLocation() = ToolDefinition(
+        name = "get_location",
+        description = "Get the device's current GPS location with address. Returns latitude, longitude, accuracy, speed, and reverse-geocoded address.",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "accuracy" to PropertySchema(
+                    type = "string",
+                    description = "Location accuracy",
+                    enum = listOf("high", "low")
+                ),
+                "include_address" to PropertySchema(type = "boolean", description = "Include reverse-geocoded address (default true)")
+            )
+        )
+    )
+
+    // --- Notes ---
+
+    private fun notes() = ToolDefinition(
+        name = "notes",
+        description = "Create, read, update, delete, list, and search personal notes. Notes are stored locally on the device and persist across conversations. Use for saving information, to-do lists, ideas, or any text the user wants to keep.",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "action" to PropertySchema(
+                    type = "string",
+                    description = "Notes action",
+                    enum = listOf("create", "read", "update", "delete", "list", "search")
+                ),
+                "title" to PropertySchema(type = "string", description = "Note title (for create/update)"),
+                "content" to PropertySchema(type = "string", description = "Note content (for create/update)"),
+                "id" to PropertySchema(type = "number", description = "Note ID (for read/update/delete)"),
+                "tags" to PropertySchema(type = "string", description = "Comma-separated tags (for create/update)"),
+                "query" to PropertySchema(type = "string", description = "Search query (for search)"),
+                "tag" to PropertySchema(type = "string", description = "Filter by tag (for list)")
+            ),
+            required = listOf("action")
+        )
+    )
+
+    // --- Text-to-Speech ---
+
+    private fun textToSpeech() = ToolDefinition(
+        name = "text_to_speech",
+        description = "Speak text aloud using text-to-speech. Use this when the user wants to hear something read out, or for hands-free responses. Can control speed, pitch, and language.",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "action" to PropertySchema(
+                    type = "string",
+                    description = "TTS action",
+                    enum = listOf("speak", "stop", "status")
+                ),
+                "text" to PropertySchema(type = "string", description = "Text to speak aloud (for 'speak' action)"),
+                "speed" to PropertySchema(type = "number", description = "Speech rate 0.5-2.0 (default 1.0)"),
+                "pitch" to PropertySchema(type = "number", description = "Voice pitch 0.5-2.0 (default 1.0)"),
+                "language" to PropertySchema(type = "string", description = "Language code (e.g. 'en-US', 'es', 'hi')")
+            ),
+            required = listOf("action")
+        )
+    )
+
+    // --- Skills (Custom Commands) ---
+
+    private fun skills() = ToolDefinition(
+        name = "skills",
+        description = "Manage custom skills (slash commands). Users can create reusable command shortcuts that chain multiple tools. Skills are organized by category and can be exported/imported as JSON for sharing. Built-in skills include /morning, /summary, /note, /see, /findme, /dnd, /shareloc, /health, /news, /reels. Skills are triggered by typing /<trigger> in chat.",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "action" to PropertySchema(
+                    type = "string",
+                    description = "Skills action",
+                    enum = listOf("create", "list", "run", "delete", "edit", "info", "export", "import", "by_category")
+                ),
+                "name" to PropertySchema(type = "string", description = "Skill display name (for create/edit)"),
+                "trigger" to PropertySchema(type = "string", description = "Slash command trigger without / (for create/run/delete/export)"),
+                "prompt" to PropertySchema(type = "string", description = "The instruction to execute when triggered (for create/edit)"),
+                "description" to PropertySchema(type = "string", description = "Short description of what the skill does"),
+                "category" to PropertySchema(
+                    type = "string",
+                    description = "Skill category (for create/edit/by_category/export)",
+                    enum = listOf("routine", "productivity", "utility", "social", "general")
+                ),
+                "id" to PropertySchema(type = "number", description = "Skill ID (for edit/delete)"),
+                "json" to PropertySchema(type = "string", description = "JSON array of skills to import (for import action)")
+            ),
+            required = listOf("action")
+        )
+    )
+
+    // --- Screen Time / Usage Stats ---
+
+    private fun screenTime() = ToolDefinition(
+        name = "screen_time",
+        description = "Get screen time and app usage statistics. Shows how long each app was used today, yesterday, or this week. Can also check usage for a specific app. Requires usage access permission (will prompt user to enable it).",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "action" to PropertySchema(
+                    type = "string",
+                    description = "What to check",
+                    enum = listOf("today", "yesterday", "week", "app", "summary")
+                ),
+                "app_name" to PropertySchema(type = "string", description = "App name to check usage for (for 'app' action)")
+            ),
+            required = listOf("action")
+        )
+    )
+
     // --- Accessibility UI Control ---
 
     private fun controlAppUi() = ToolDefinition(
@@ -382,6 +608,77 @@ object ToolDefinitions {
                 )
             ),
             required = listOf("app_package", "actions")
+        )
+    )
+
+    // --- GitHub ---
+
+    private fun github() = ToolDefinition(
+        name = "github",
+        description = "GitHub operations via the GitHub REST API: PRs, issues, CI workflow runs, repos, notifications, search, and direct file editing (read/write/delete files in any repo, committing straight to a branch via the Contents API). Use for: checking PR status/CI, creating or commenting on issues, viewing workflow runs, searching repos, browsing repo contents, and editing files in a repo from your phone. Always pass repo as 'owner/repo'. Requires a GitHub Personal Access Token with appropriate scopes (set in Settings → GitHub) — file writes need contents:write / repo scope.",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "action" to PropertySchema(
+                    type = "string",
+                    description = "GitHub action to perform",
+                    enum = listOf(
+                        "list_prs", "view_pr", "pr_checks", "create_pr_comment", "merge_pr",
+                        "list_issues", "view_issue", "create_issue", "comment_issue", "close_issue",
+                        "list_runs", "view_run", "rerun",
+                        "list_repos", "list_notifications",
+                        "search_repos", "search_issues",
+                        "get_user",
+                        "read_file", "write_file", "delete_file", "list_dir",
+                        "api"
+                    )
+                ),
+                "repo" to PropertySchema(type = "string", description = "Repository in owner/repo form (e.g. 'openclaw/openclaw')"),
+                "number" to PropertySchema(type = "number", description = "PR or issue number"),
+                "state" to PropertySchema(type = "string", description = "Filter state: open, closed, all (for list_prs/list_issues)", enum = listOf("open", "closed", "all")),
+                "limit" to PropertySchema(type = "number", description = "Max results (default 10–20 depending on action)"),
+                "title" to PropertySchema(type = "string", description = "Title (for create_issue)"),
+                "body" to PropertySchema(type = "string", description = "Body text for issue/PR comment, create_issue, or raw API request body"),
+                "merge_method" to PropertySchema(type = "string", description = "Merge method (for merge_pr)", enum = listOf("merge", "squash", "rebase")),
+                "run_id" to PropertySchema(type = "number", description = "Workflow run ID (for view_run / rerun)"),
+                "failed_only" to PropertySchema(type = "boolean", description = "Only re-run failed jobs (for rerun)"),
+                "user" to PropertySchema(type = "string", description = "GitHub username (for list_repos)"),
+                "username" to PropertySchema(type = "string", description = "GitHub username (for get_user; omit to get the authenticated user)"),
+                "query" to PropertySchema(type = "string", description = "Search query (for search_repos / search_issues — uses GitHub search syntax)"),
+                "path" to PropertySchema(type = "string", description = "File path inside the repo (for read_file/write_file/delete_file/list_dir) or raw API path starting with / (for action 'api')"),
+                "content" to PropertySchema(type = "string", description = "Full new file content as plain text (for write_file). Will be base64-encoded automatically."),
+                "branch" to PropertySchema(type = "string", description = "Branch name for read/write/delete/list_dir (defaults to the repo's default branch)"),
+                "sha" to PropertySchema(type = "string", description = "File SHA (optional for write_file/delete_file — auto-fetched if omitted; only needed to avoid the auto-probe)"),
+                "message" to PropertySchema(type = "string", description = "Commit message (for write_file/delete_file)"),
+                "method" to PropertySchema(type = "string", description = "HTTP method for raw API call", enum = listOf("GET", "POST", "PUT", "PATCH", "DELETE"))
+            ),
+            required = listOf("action")
+        )
+    )
+
+    // --- Scheduled Automation ---
+
+    private fun schedule() = ToolDefinition(
+        name = "schedule",
+        description = "Schedule AI tasks to run automatically in the background. Supports one-shot (run once after a delay) and recurring (run every N minutes, minimum 15). Scheduled tasks execute with full tool access and deliver results as notifications. Like a cron job for your AI assistant.",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "action" to PropertySchema(
+                    type = "string",
+                    description = "Schedule action",
+                    enum = listOf("create", "list", "delete", "pause", "resume", "info", "run_now")
+                ),
+                "name" to PropertySchema(type = "string", description = "Name for the scheduled task (for create)"),
+                "prompt" to PropertySchema(type = "string", description = "The AI instruction to execute on schedule (for create)"),
+                "type" to PropertySchema(
+                    type = "string",
+                    description = "Schedule type",
+                    enum = listOf("once", "recurring")
+                ),
+                "delay_minutes" to PropertySchema(type = "number", description = "Minutes from now to run (for one-shot)"),
+                "interval_minutes" to PropertySchema(type = "number", description = "Minutes between runs (for recurring, minimum 15)"),
+                "id" to PropertySchema(type = "number", description = "Schedule ID (for delete/pause/resume/info/run_now)")
+            ),
+            required = listOf("action")
         )
     )
 }

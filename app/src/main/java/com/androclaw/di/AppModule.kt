@@ -9,7 +9,11 @@ import com.androclaw.api.ClaudeResponseConverterFactory
 import com.androclaw.api.MessageAdapter
 import com.androclaw.db.AndroClawDatabase
 import com.androclaw.db.ConversationDao
+import com.androclaw.db.MemoryDao
 import com.androclaw.db.MessageDao
+import com.androclaw.db.NoteDao
+import com.androclaw.db.ScheduleDao
+import com.androclaw.db.SkillDao
 import com.androclaw.utils.Constants
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -80,6 +84,26 @@ object AppModule {
     @Singleton
     fun provideConversationDao(database: AndroClawDatabase): ConversationDao =
         database.conversationDao()
+
+    @Provides
+    @Singleton
+    fun provideMemoryDao(database: AndroClawDatabase): MemoryDao =
+        database.memoryDao()
+
+    @Provides
+    @Singleton
+    fun provideNoteDao(database: AndroClawDatabase): NoteDao =
+        database.noteDao()
+
+    @Provides
+    @Singleton
+    fun provideSkillDao(database: AndroClawDatabase): SkillDao =
+        database.skillDao()
+
+    @Provides
+    @Singleton
+    fun provideScheduleDao(database: AndroClawDatabase): ScheduleDao =
+        database.scheduleDao()
 
     @Provides
     @Singleton

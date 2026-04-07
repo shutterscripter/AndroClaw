@@ -2,8 +2,11 @@ package com.androclaw.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.graphics.Bitmap
 import android.graphics.Path
+import android.os.Build
 import android.os.Bundle
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.CompletableDeferred
@@ -285,6 +288,34 @@ class AndroClawAccessibilityService : AccessibilityService() {
     fun openQuickSettings(): String {
         performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
         return "Opened quick settings"
+    }
+
+    // --- Screenshot capture to Bitmap (Android 11+) ---
+
+    suspend fun captureScreenshot(): Bitmap? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+
+        val deferred = CompletableDeferred<Bitmap?>()
+        takeScreenshot(
+            Display.DEFAULT_DISPLAY,
+            mainExecutor,
+            object : TakeScreenshotCallback {
+                override fun onSuccess(screenshot: ScreenshotResult) {
+                    val bitmap = Bitmap.wrapHardwareBuffer(
+                        screenshot.hardwareBuffer,
+                        screenshot.colorSpace
+                    )
+                    screenshot.hardwareBuffer.close()
+                    deferred.complete(bitmap)
+                }
+
+                override fun onFailure(errorCode: Int) {
+                    deferred.complete(null)
+                }
+            }
+        )
+
+        return deferred.await()
     }
 
     companion object {

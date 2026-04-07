@@ -39,6 +39,15 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        unitTests {
+            // Make Android framework stubs return defaults instead of throwing
+            // "Method ... not mocked" — lets us test code that touches Log.d/Log.w/etc.
+            isReturnDefaultValues = true
+            isIncludeAndroidResources = false
+        }
+    }
 }
 
 dependencies {
@@ -79,11 +88,30 @@ dependencies {
     implementation(libs.moshi.kotlin)
     ksp(libs.moshi.kotlin.codegen)
 
+    // Jsoup (HTML parsing for web search/fetch)
+    implementation(libs.jsoup)
+
+    // PDF text extraction
+    implementation(libs.pdfbox.android)
+
+    // WorkManager
+    implementation(libs.work.runtime.ktx)
+    implementation(libs.hilt.work)
+    ksp(libs.hilt.work.compiler)
+
     // Security
     implementation(libs.security.crypto)
 
-    // Test
+    // Test (JVM unit tests)
     testImplementation(libs.junit)
+    testImplementation(libs.mockito.core)
+    testImplementation(libs.mockito.kotlin)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.org.json)
+    testImplementation(libs.truth)
+    testImplementation(libs.moshi)
+    testImplementation(libs.moshi.kotlin)
+
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

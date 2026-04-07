@@ -28,38 +28,78 @@ class ToolExecutor @Inject constructor(
     private val notificationHandler: NotificationToolHandler,
     private val emailHandler: EmailToolHandler,
     private val autoScrollHandler: AutoScrollToolHandler,
-    private val appCache: AppCacheManager
+    private val appCache: AppCacheManager,
+    private val webSearchHandler: WebSearchToolHandler,
+    private val webFetchHandler: WebFetchToolHandler,
+    private val memoryHandler: MemoryToolHandler,
+    private val smsReaderHandler: SmsReaderToolHandler,
+    private val callLogHandler: CallLogToolHandler,
+    private val locationHandler: LocationToolHandler,
+    private val notesHandler: NotesToolHandler,
+    private val ttsHandler: TtsToolHandler,
+    private val skillHandler: SkillToolHandler,
+    private val usageStatsHandler: UsageStatsToolHandler,
+    private val scheduleHandler: ScheduleToolHandler,
+    private val githubHandler: GitHubToolHandler,
+    val interceptor: ToolInterceptor
 ) {
 
     suspend fun execute(toolName: String, input: Map<String, Any>): String {
-        return try {
-            when (toolName) {
-                "send_sms" -> smsHandler.execute(input)
-                "open_app" -> appLaunchHandler.execute(input)
-                "list_apps" -> appLaunchHandler.listApps(input)
-                "browse_web" -> browserHandler.execute(input)
-                "toggle_setting" -> wifiHandler.execute(input)
-                "send_whatsapp" -> whatsAppHandler.execute(input)
-                "create_calendar_event" -> calendarHandler.execute(input)
-                "set_reminder" -> reminderHandler.execute(input)
-                "get_contacts" -> contactsHandler.execute(input)
-                "make_phone_call" -> phoneCallHandler.execute(input)
-                "file_manager" -> fileHandler.execute(input)
-                "media_control" -> mediaControlHandler.execute(input)
-                "brightness_control" -> brightnessHandler.execute(input)
-                "clipboard" -> clipboardHandler.execute(input)
-                "set_alarm" -> alarmHandler.execute(input)
-                "device_info" -> deviceInfoHandler.execute(input)
-                "take_screenshot" -> screenshotHandler.execute(input)
-                "share_content" -> shareHandler.execute(input)
-                "notifications" -> notificationHandler.execute(input)
-                "send_email" -> emailHandler.execute(input)
-                "auto_scroll_feed" -> autoScrollHandler.execute(input)
-                "control_app_ui" -> executeAccessibilityAction(input)
-                else -> "Unknown tool: $toolName"
-            }
+        // Before-hook: rate limiting check
+        val blocked = interceptor.beforeExecute(toolName, input)
+        if (blocked != null) return blocked
+
+        val startTime = System.currentTimeMillis()
+        val result = try {
+            dispatch(toolName, input)
         } catch (e: Exception) {
             "Error executing $toolName: ${e.message}"
+        }
+
+        // After-hook: audit log
+        val duration = System.currentTimeMillis() - startTime
+        interceptor.afterExecute(toolName, input, result, duration)
+
+        return result
+    }
+
+    private suspend fun dispatch(toolName: String, input: Map<String, Any>): String {
+        return when (toolName) {
+            "send_sms" -> smsHandler.execute(input)
+            "open_app" -> appLaunchHandler.execute(input)
+            "list_apps" -> appLaunchHandler.listApps(input)
+            "browse_web" -> browserHandler.execute(input)
+            "toggle_setting" -> wifiHandler.execute(input)
+            "send_whatsapp" -> whatsAppHandler.execute(input)
+            "create_calendar_event" -> calendarHandler.execute(input)
+            "set_reminder" -> reminderHandler.execute(input)
+            "get_contacts" -> contactsHandler.execute(input)
+            "make_phone_call" -> phoneCallHandler.execute(input)
+            "file_manager" -> fileHandler.execute(input)
+            "media_control" -> mediaControlHandler.execute(input)
+            "brightness_control" -> brightnessHandler.execute(input)
+            "clipboard" -> clipboardHandler.execute(input)
+            "set_alarm" -> alarmHandler.execute(input)
+            "device_info" -> deviceInfoHandler.execute(input)
+            "take_screenshot" -> screenshotHandler.execute(input)
+            "share_content" -> shareHandler.execute(input)
+            "notifications" -> notificationHandler.execute(input)
+            "send_email" -> emailHandler.execute(input)
+            "auto_scroll_feed" -> autoScrollHandler.execute(input)
+            "control_app_ui" -> executeAccessibilityAction(input)
+            "web_search" -> webSearchHandler.execute(input)
+            "web_fetch" -> webFetchHandler.execute(input)
+            "memory" -> memoryHandler.execute(input)
+            "read_sms" -> smsReaderHandler.execute(input)
+            "call_log" -> callLogHandler.execute(input)
+            "get_location" -> locationHandler.execute(input)
+            "notes" -> notesHandler.execute(input)
+            "text_to_speech" -> ttsHandler.execute(input)
+            "skills" -> skillHandler.execute(input)
+            "screen_time" -> usageStatsHandler.execute(input)
+            "schedule" -> scheduleHandler.execute(input)
+            "github" -> githubHandler.execute(input)
+            else -> "Unknown tool: $toolName"
         }
     }
 

@@ -4,7 +4,11 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import com.androclaw.service.AndroClawAccessibilityService
+import com.androclaw.service.NotificationReaderService
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -20,7 +24,46 @@ class NotificationToolHandler @Inject constructor(
             "show", "open" -> openNotificationPanel()
             "clear", "dismiss_all" -> clearNotifications()
             "settings" -> openNotificationSettings()
-            else -> "Unknown action: $action. Use: show, clear, settings"
+            "read", "list" -> readNotifications(input)
+            else -> "Unknown action: $action. Use: show, clear, settings, read"
+        }
+    }
+
+    private fun readNotifications(input: Map<String, Any>): String {
+        val service = NotificationReaderService.instance
+            ?: return "Notification reader not enabled. Please enable AndroClaw in Settings > Notifications > Notification access."
+
+        val appFilter = input["app"] as? String
+        val maxCount = (input["count"] as? Number)?.toInt() ?: 20
+
+        val notifications = service.getActiveNotificationsSummary(maxCount)
+        val filtered = if (appFilter != null) {
+            notifications.filter {
+                it.appName.contains(appFilter, ignoreCase = true) ||
+                    it.packageName.contains(appFilter, ignoreCase = true)
+            }
+        } else notifications
+
+        if (filtered.isEmpty()) {
+            return if (appFilter != null) "No notifications from \"$appFilter\"." else "No notifications."
+        }
+
+        val dateFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
+        return "Notifications (${filtered.size}):\n" + filtered.joinToString("\n") { n ->
+            val time = dateFormat.format(Date(n.time))
+            val ago = timeAgo(n.time)
+            "${n.appName}: ${n.title}${if (n.text.isNotBlank()) " — ${n.text}" else ""} ($time, $ago)"
+        }
+    }
+
+    private fun timeAgo(timestamp: Long): String {
+        val diff = System.currentTimeMillis() - timestamp
+        val minutes = diff / 60_000
+        val hours = minutes / 60
+        return when {
+            hours > 0 -> "${hours}h ago"
+            minutes > 0 -> "${minutes}m ago"
+            else -> "just now"
         }
     }
 
