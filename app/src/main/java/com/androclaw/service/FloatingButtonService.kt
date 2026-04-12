@@ -211,7 +211,7 @@ class FloatingButtonService : Service(), LifecycleOwner, SavedStateRegistryOwner
 
         // Initialize chat manager on first open
         if (chatManager == null) {
-            chatManager = OverlayChatManager(repository, messageDao, conversationDao, prefs)
+            chatManager = OverlayChatManager(applicationContext, repository, messageDao, conversationDao, prefs)
         }
         // Always re-resolve in case the user switched chats in the main app
         chatManager!!.ensureConversation()

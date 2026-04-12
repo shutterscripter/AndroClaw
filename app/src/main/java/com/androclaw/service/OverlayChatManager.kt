@@ -1,5 +1,6 @@
 package com.androclaw.service
 
+import android.content.Context
 import android.content.SharedPreferences
 import com.androclaw.api.ClaudeRepository
 import com.androclaw.api.models.Message
@@ -8,6 +9,9 @@ import com.androclaw.db.ConversationEntity
 import com.androclaw.db.MessageDao
 import com.androclaw.db.MessageEntity
 import com.androclaw.utils.Constants
+import com.androclaw.utils.NetworkErrors
+import com.androclaw.utils.hasInternetConnectivity
+import com.androclaw.utils.isLikelyConnectivityFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -24,6 +28,7 @@ import kotlinx.coroutines.launch
  * overlay always shows the same chat the user has open in the main app.
  */
 class OverlayChatManager(
+    private val appContext: Context,
     private val repository: ClaudeRepository,
     private val messageDao: MessageDao,
     private val conversationDao: ConversationDao,
@@ -145,7 +150,31 @@ class OverlayChatManager(
             _isLoading.value = true
             _streamingText.value = null
 
-            val result = repository.sendMessage(conversationHistory, text)
+            if (!appContext.hasInternetConnectivity()) {
+                messageDao.insertMessage(
+                    MessageEntity(
+                        conversationId = convId,
+                        role = "assistant",
+                        content = "Error: ${NetworkErrors.NO_CONNECTION_USER_MESSAGE}"
+                    )
+                )
+                conversationDao.touchConversation(convId)
+                rebuildHistoryFromDb(convId)
+                _isLoading.value = false
+                _streamingText.value = null
+                return@launch
+            }
+
+            val result = try {
+                repository.sendMessage(conversationHistory, text)
+            } catch (e: Exception) {
+                val msg = if (e.isLikelyConnectivityFailure()) {
+                    NetworkErrors.NO_CONNECTION_USER_MESSAGE
+                } else {
+                    e.message ?: "Something went wrong."
+                }
+                Result.failure(Exception(msg))
+            }
             result.fold(
                 onSuccess = { response ->
                     messageDao.insertMessage(
@@ -172,6 +201,7 @@ class OverlayChatManager(
                     messageDao.insertMessage(
                         MessageEntity(conversationId = convId, role = "assistant", content = "Error: ${error.message}")
                     )
+                    rebuildHistoryFromDb(convId)
                 }
             )
             _isLoading.value = false

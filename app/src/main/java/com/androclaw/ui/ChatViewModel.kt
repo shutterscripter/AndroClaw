@@ -1,6 +1,9 @@
 package com.androclaw.ui
 
+import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.androclaw.api.AgentEvent
@@ -14,7 +17,11 @@ import com.androclaw.db.ConversationEntity
 import com.androclaw.db.MessageDao
 import com.androclaw.db.MessageEntity
 import com.androclaw.utils.Constants
+import com.androclaw.utils.NetworkErrors
+import com.androclaw.utils.hasInternetConnectivity
+import com.androclaw.utils.isLikelyConnectivityFailure
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -30,12 +37,13 @@ import javax.inject.Named
 data class ChatUiState(
     val isLoading: Boolean = false,
     val currentToolStatus: String? = null,
-    val error: String? = null,
     val activeConversationId: Long? = null,
     val isDrawerOpen: Boolean = false,
     val streamingText: String? = null,
     val contextUsage: ContextUsageInfo? = null,
-    val isCompacting: Boolean = false
+    val isCompacting: Boolean = false,
+    /** One-shot: show offline snackbar with Wi-Fi action (not used for other errors). */
+    val showOfflineNetworkSnackbar: Boolean = false
 )
 
 @HiltViewModel
@@ -46,7 +54,8 @@ class ChatViewModel @Inject constructor(
     private val skillToolHandler: SkillToolHandler,
     private val bootstrapManager: BootstrapManager,
     @Named("encrypted") private val encryptedPrefs: SharedPreferences,
-    @Named("regular") private val prefs: SharedPreferences
+    @Named("regular") private val prefs: SharedPreferences,
+    @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -125,7 +134,6 @@ class ChatViewModel @Inject constructor(
                     is AgentEvent.Error -> {
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
-                            error = event.message,
                             currentToolStatus = null,
                             streamingText = null
                         )
@@ -181,7 +189,7 @@ class ChatViewModel @Inject constructor(
             isDrawerOpen = false,
             isLoading = false,
             currentToolStatus = null,
-            error = null
+            showOfflineNetworkSnackbar = false
         )
         // Persist so the overlay (and next launch) lands on the same chat.
         prefs.edit().putLong(Constants.PREF_ACTIVE_CONVERSATION_ID, conversationId).apply()
@@ -261,8 +269,8 @@ class ChatViewModel @Inject constructor(
 
             _uiState.value = _uiState.value.copy(
                 isLoading = true,
-                error = null,
-                streamingText = null
+                streamingText = null,
+                showOfflineNetworkSnackbar = false
             )
 
             // Rebuild conversation history from DB if empty (e.g. after switching conversations)
@@ -275,7 +283,30 @@ class ChatViewModel @Inject constructor(
                 skillToolHandler.resolveSlashCommand(text) ?: text
             } else text
 
-            val result = repository.sendMessage(conversationHistory, resolvedText)
+            if (!appContext.hasInternetConnectivity()) {
+                val offlineMsg = NetworkErrors.NO_CONNECTION_USER_MESSAGE
+                messageDao.insertMessage(
+                    MessageEntity(conversationId = convId, role = "assistant", content = "Error: $offlineMsg")
+                )
+                conversationDao.touchConversation(convId)
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    showOfflineNetworkSnackbar = true
+                )
+                rebuildHistory(convId)
+                return@launch
+            }
+
+            val result = try {
+                repository.sendMessage(conversationHistory, resolvedText)
+            } catch (e: Exception) {
+                val msg = if (e.isLikelyConnectivityFailure()) {
+                    NetworkErrors.NO_CONNECTION_USER_MESSAGE
+                } else {
+                    e.message ?: "Something went wrong."
+                }
+                Result.failure(Exception(msg))
+            }
 
             result.fold(
                 onSuccess = { response ->
@@ -289,16 +320,35 @@ class ChatViewModel @Inject constructor(
                     generateTitleIfNeeded(convId)
                 },
                 onFailure = { error ->
+                    val display = error.message ?: "Something went wrong."
                     messageDao.insertMessage(
-                        MessageEntity(conversationId = convId, role = "assistant", content = "Error: ${error.message}")
+                        MessageEntity(conversationId = convId, role = "assistant", content = "Error: $display")
                     )
+                    conversationDao.touchConversation(convId)
+                    val offlineSnack = NetworkErrors.isConnectivityUserMessage(display)
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        error = error.message
+                        showOfflineNetworkSnackbar = offlineSnack
                     )
+                    rebuildHistory(convId)
                 }
             )
         }
+    }
+
+    fun openNetworkSettings() {
+        val wifi = Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            appContext.startActivity(wifi)
+        } catch (_: Exception) {
+            appContext.startActivity(
+                Intent(Settings.ACTION_WIRELESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
+
+    fun clearOfflineNetworkSnackbar() {
+        _uiState.value = _uiState.value.copy(showOfflineNetworkSnackbar = false)
     }
 
     /**
@@ -350,7 +400,4 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun dismissError() {
-        _uiState.value = _uiState.value.copy(error = null)
-    }
 }

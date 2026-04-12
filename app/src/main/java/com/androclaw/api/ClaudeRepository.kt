@@ -9,6 +9,8 @@ import com.androclaw.api.provider.ProviderRegistry
 import com.androclaw.api.provider.StreamChunk
 import com.androclaw.tools.ToolExecutor
 import com.androclaw.utils.Constants
+import com.androclaw.utils.NetworkErrors
+import com.androclaw.utils.isLikelyConnectivityFailure
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -85,124 +87,137 @@ class ClaudeRepository @Inject constructor(
         val provider = resolveProvider()
             ?: return Result.failure(Exception("Provider \"${getProvider()}\" not found."))
 
-        // Reset per-turn interceptor counters
-        toolExecutor.interceptor.resetTurnCounters()
+        return try {
+            // Reset per-turn interceptor counters
+            toolExecutor.interceptor.resetTurnCounters()
 
-        // Add user message
-        conversationHistory.add(Message(role = "user", content = userText))
+            // Add user message
+            conversationHistory.add(Message(role = "user", content = userText))
 
-        val tools = ToolDefinitions.getAllTools(getEnabledTools())
-        var attempts = 0
-        val maxLoopIterations = 10
+            val tools = ToolDefinitions.getAllTools(getEnabledTools())
+            var attempts = 0
+            val maxLoopIterations = 10
 
-        val systemPrompt = buildSystemPrompt()
-        val model = getModel()
-        val providerId = getProvider()
-        // Streaming is always on when the provider supports it — there is no
-        // user toggle. Providers that don't support SSE fall through to the
-        // non-streaming path automatically.
-        val streaming = provider.supportsStreaming
+            val systemPrompt = buildSystemPrompt()
+            val model = getModel()
+            val providerId = getProvider()
+            // Streaming is always on when the provider supports it — there is no
+            // user toggle. Providers that don't support SSE fall through to the
+            // non-streaming path automatically.
+            val streaming = provider.supportsStreaming
 
-        // Prune verbose tool results from older messages
-        contextManager.pruneOldToolResults(conversationHistory)
+            // Prune verbose tool results from older messages
+            contextManager.pruneOldToolResults(conversationHistory)
 
-        // Auto-compact if context window is getting full
-        if (contextManager.needsCompaction(systemPrompt, conversationHistory, providerId, model)) {
-            val plan = contextManager.prepareCompaction(conversationHistory)
-            if (plan != null) {
-                _agentEvents.emit(AgentEvent.Compacting("Summarizing older messages to free up context..."))
-                try {
-                    val summaryResponse = if (streaming) {
-                        sendStreaming(provider, apiKey, model, "You are a helpful assistant that summarizes conversations.",
-                            listOf(Message(role = "user", content = plan.summaryPrompt)), emptyList())
-                    } else {
-                        sendWithRetry(provider, apiKey, model, "You are a helpful assistant that summarizes conversations.",
-                            listOf(Message(role = "user", content = plan.summaryPrompt)), emptyList())
+            // Auto-compact if context window is getting full
+            if (contextManager.needsCompaction(systemPrompt, conversationHistory, providerId, model)) {
+                val plan = contextManager.prepareCompaction(conversationHistory)
+                if (plan != null) {
+                    _agentEvents.emit(AgentEvent.Compacting("Summarizing older messages to free up context..."))
+                    try {
+                        val summaryResponse = if (streaming) {
+                            sendStreaming(provider, apiKey, model, "You are a helpful assistant that summarizes conversations.",
+                                listOf(Message(role = "user", content = plan.summaryPrompt)), emptyList())
+                        } else {
+                            sendWithRetry(provider, apiKey, model, "You are a helpful assistant that summarizes conversations.",
+                                listOf(Message(role = "user", content = plan.summaryPrompt)), emptyList()
+                            ).getOrNull()
+                        }
+                        val summary = summaryResponse?.content
+                            ?.filter { it.type == "text" }
+                            ?.joinToString("\n") { it.text ?: "" }
+                            ?.trim()
+
+                        if (!summary.isNullOrBlank()) {
+                            contextManager.applyCompaction(conversationHistory, summary, plan)
+                        }
+                    } catch (_: Exception) {
+                        // Compaction failed — continue with full history
                     }
-                    val summary = summaryResponse?.content
-                        ?.filter { it.type == "text" }
-                        ?.joinToString("\n") { it.text ?: "" }
-                        ?.trim()
-
-                    if (!summary.isNullOrBlank()) {
-                        contextManager.applyCompaction(conversationHistory, summary, plan)
-                    }
-                } catch (_: Exception) {
-                    // Compaction failed — continue with full history
                 }
             }
-        }
 
-        // Emit context usage info
-        val usageInfo = contextManager.getUsageInfo(systemPrompt, conversationHistory, providerId, model)
-        _agentEvents.emit(AgentEvent.ContextUpdate(usageInfo))
+            // Emit context usage info
+            val usageInfo = contextManager.getUsageInfo(systemPrompt, conversationHistory, providerId, model)
+            _agentEvents.emit(AgentEvent.ContextUpdate(usageInfo))
 
-        while (attempts < maxLoopIterations) {
+            while (attempts < maxLoopIterations) {
 
-            val response: LlmResponse = if (streaming) {
-                sendStreaming(provider, apiKey, model, systemPrompt, conversationHistory, tools)
+                val response: LlmResponse = if (streaming) {
+                    sendStreaming(provider, apiKey, model, systemPrompt, conversationHistory, tools)
+                } else {
+                    val nr = sendWithRetry(provider, apiKey, model, systemPrompt, conversationHistory, tools)
+                    if (nr.isFailure) {
+                        return Result.failure(nr.exceptionOrNull() as? Exception ?: Exception(nr.exceptionOrNull()?.message))
+                    }
+                    nr.getOrThrow()
+                }
+
+                // Add assistant response to history
+                val assistantContent = response.content.map { block ->
+                    when (block.type) {
+                        "text" -> mapOf("type" to "text", "text" to (block.text ?: ""))
+                        "tool_use" -> {
+                            val map = mutableMapOf<String, Any>(
+                                "type" to "tool_use",
+                                "id" to (block.id ?: ""),
+                                "name" to (block.name ?: "")
+                            )
+                            block.input?.let { map["input"] = it }
+                            map
+                        }
+                        else -> mapOf("type" to block.type)
+                    }
+                }
+                conversationHistory.add(Message(role = "assistant", content = assistantContent))
+
+                // Check if there are tool uses
+                val toolUseBlocks = response.content.filter { it.type == "tool_use" }
+
+                if (toolUseBlocks.isEmpty() || response.stopReason == "end_turn" || response.stopReason == "stop") {
+                    val finalText = response.content
+                        .filter { it.type == "text" }
+                        .joinToString("\n") { it.text ?: "" }
+                        .trim()
+
+                    _agentEvents.emit(AgentEvent.FinalResponse(finalText))
+                    return Result.success(finalText)
+                }
+
+                // Execute tools
+                val toolResults = mutableListOf<Map<String, Any>>()
+
+                for (block in toolUseBlocks) {
+                    val toolName = block.name ?: continue
+                    val toolId = block.id ?: continue
+                    val toolInput = block.input ?: emptyMap()
+
+                    val description = describeToolCall(toolName, toolInput)
+                    _agentEvents.emit(AgentEvent.ToolExecuting(ToolStatus(toolName, description)))
+
+                    val result = try {
+                        toolExecutor.execute(toolName, toolInput)
+                    } catch (e: Exception) {
+                        "Error executing $toolName: ${e.message}"
+                    }
+
+                    _agentEvents.emit(AgentEvent.ToolCompleted(ToolStatus(toolName, description, isComplete = true)))
+                    toolResults.add(buildToolResultBlock(toolId, result))
+                }
+
+                conversationHistory.add(Message(role = "user", content = toolResults))
+                attempts++
+            }
+
+            Result.failure(Exception("Agent exceeded maximum tool use iterations."))
+        } catch (e: Exception) {
+            val msg = if (e.isLikelyConnectivityFailure()) {
+                NetworkErrors.NO_CONNECTION_USER_MESSAGE
             } else {
-                val result = sendWithRetry(provider, apiKey, model, systemPrompt, conversationHistory, tools)
-                result ?: return Result.failure(Exception("Failed to get response after retries."))
+                e.message ?: "Unknown error"
             }
-
-            // Add assistant response to history
-            val assistantContent = response.content.map { block ->
-                when (block.type) {
-                    "text" -> mapOf("type" to "text", "text" to (block.text ?: ""))
-                    "tool_use" -> {
-                        val map = mutableMapOf<String, Any>(
-                            "type" to "tool_use",
-                            "id" to (block.id ?: ""),
-                            "name" to (block.name ?: "")
-                        )
-                        block.input?.let { map["input"] = it }
-                        map
-                    }
-                    else -> mapOf("type" to block.type)
-                }
-            }
-            conversationHistory.add(Message(role = "assistant", content = assistantContent))
-
-            // Check if there are tool uses
-            val toolUseBlocks = response.content.filter { it.type == "tool_use" }
-
-            if (toolUseBlocks.isEmpty() || response.stopReason == "end_turn" || response.stopReason == "stop") {
-                val finalText = response.content
-                    .filter { it.type == "text" }
-                    .joinToString("\n") { it.text ?: "" }
-                    .trim()
-
-                _agentEvents.emit(AgentEvent.FinalResponse(finalText))
-                return Result.success(finalText)
-            }
-
-            // Execute tools
-            val toolResults = mutableListOf<Map<String, Any>>()
-
-            for (block in toolUseBlocks) {
-                val toolName = block.name ?: continue
-                val toolId = block.id ?: continue
-                val toolInput = block.input ?: emptyMap()
-
-                val description = describeToolCall(toolName, toolInput)
-                _agentEvents.emit(AgentEvent.ToolExecuting(ToolStatus(toolName, description)))
-
-                val result = try {
-                    toolExecutor.execute(toolName, toolInput)
-                } catch (e: Exception) {
-                    "Error executing $toolName: ${e.message}"
-                }
-
-                _agentEvents.emit(AgentEvent.ToolCompleted(ToolStatus(toolName, description, isComplete = true)))
-                toolResults.add(buildToolResultBlock(toolId, result))
-            }
-
-            conversationHistory.add(Message(role = "user", content = toolResults))
-            attempts++
+            Result.failure(Exception(msg))
         }
-
-        return Result.failure(Exception("Agent exceeded maximum tool use iterations."))
     }
 
     // ── Streaming ──────────────────────────────────────────────────
@@ -287,31 +302,41 @@ class ClaudeRepository @Inject constructor(
         messages: List<Message>,
         tools: List<com.androclaw.api.models.ToolDefinition>,
         maxRetries: Int = 3
-    ): LlmResponse? {
+    ): Result<LlmResponse> {
         var lastError: Exception? = null
         repeat(maxRetries) { attempt ->
             try {
                 val result = provider.sendMessage(apiKey, model, systemPrompt, messages, tools.ifEmpty { null }, Constants.MAX_TOKENS)
                 result.fold(
-                    onSuccess = { return it },
+                    onSuccess = { return Result.success(it) },
                     onFailure = { e ->
                         lastError = e as? Exception ?: Exception(e.message)
                         val msg = e.message ?: ""
+                        val displayMsg = if (e.isLikelyConnectivityFailure()) {
+                            NetworkErrors.NO_CONNECTION_USER_MESSAGE
+                        } else {
+                            msg
+                        }
                         if (msg.contains("429") || msg.contains("500") || msg.contains("502") || msg.contains("503")) {
                             delay(1000L * (attempt + 1))
                         } else {
-                            _agentEvents.emit(AgentEvent.Error(msg))
-                            return null
+                            return Result.failure(Exception(displayMsg))
                         }
                     }
                 )
             } catch (e: Exception) {
-                lastError = e
+                lastError = e as? Exception ?: Exception(e.message)
+                if (e.isLikelyConnectivityFailure()) {
+                    return Result.failure(Exception(NetworkErrors.NO_CONNECTION_USER_MESSAGE))
+                }
                 delay(1000L * (attempt + 1))
             }
         }
-        _agentEvents.emit(AgentEvent.Error(lastError?.message ?: "Unknown error"))
-        return null
+        val fallbackMsg = lastError?.let { err ->
+            if (err.isLikelyConnectivityFailure()) NetworkErrors.NO_CONNECTION_USER_MESSAGE
+            else err.message
+        } ?: "Unknown error"
+        return Result.failure(Exception(fallbackMsg))
     }
 
     // ── Helpers ──────────────────────────────────────────────────
