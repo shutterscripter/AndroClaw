@@ -15,7 +15,7 @@
 
 It is designed as a single-user, local-first assistant: keys live in `EncryptedSharedPreferences`, conversations and memory live in a Room database on-device, and tool calls run inside the app process. There is no backend to point at and no account to create.
 
-Built by **Pranav Patil**.
+Built by **Pranav Patil** — [𝕏 @21prnv](https://x.com/21prnv).
 
 ## Highlights
 
