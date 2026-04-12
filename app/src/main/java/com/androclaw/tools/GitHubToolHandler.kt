@@ -42,10 +42,12 @@ class GitHubToolHandler @Inject constructor(
 
     private fun executeBlocking(input: Map<String, Any>): String {
         val action = (input["action"] as? String)?.lowercase()
-            ?: return "Missing 'action'. Try one of: list_prs, view_pr, create_pr_comment, " +
-                "merge_pr, list_issues, view_issue, create_issue, comment_issue, close_issue, " +
-                "list_runs, view_run, rerun, list_repos, list_notifications, search_repos, " +
-                "search_issues, get_user, read_file, write_file, delete_file, list_dir, api"
+            ?: return "Missing 'action'. Try one of: list_prs, view_pr, create_pr, " +
+                "create_pr_comment, merge_pr, list_issues, view_issue, create_issue, " +
+                "comment_issue, close_issue, list_runs, view_run, rerun, list_repos, " +
+                "list_notifications, search_repos, search_issues, get_user, read_file, " +
+                "write_file, delete_file, list_dir, create_branch, list_orgs, view_org, " +
+                "list_org_members, list_org_teams, list_org_issues, create_repo, api"
 
         val rawStored = try {
             encryptedPrefs.getString(Constants.PREF_GITHUB_TOKEN, null)
@@ -67,8 +69,10 @@ class GitHubToolHandler @Inject constructor(
                 "list_prs" -> listPrs(input, token)
                 "view_pr" -> viewPr(input, token)
                 "pr_checks" -> prChecks(input, token)
+                "create_pr" -> createPr(input, token)
                 "create_pr_comment" -> createPrComment(input, token)
                 "merge_pr" -> mergePr(input, token)
+                "create_branch" -> createBranch(input, token)
                 "list_issues" -> listIssues(input, token)
                 "view_issue" -> viewIssue(input, token)
                 "create_issue" -> createIssue(input, token)
@@ -78,6 +82,12 @@ class GitHubToolHandler @Inject constructor(
                 "view_run" -> viewRun(input, token)
                 "rerun" -> rerunRun(input, token)
                 "list_repos" -> listRepos(input, token)
+                "list_orgs" -> listOrgs(input, token)
+                "view_org" -> viewOrg(input, token)
+                "list_org_members" -> listOrgMembers(input, token)
+                "list_org_teams" -> listOrgTeams(input, token)
+                "list_org_issues" -> listOrgIssues(input, token)
+                "create_repo" -> createRepo(input, token)
                 "list_notifications" -> listNotifications(token)
                 "search_repos" -> searchRepos(input, token)
                 "search_issues" -> searchIssues(input, token)
@@ -235,6 +245,69 @@ class GitHubToolHandler @Inject constructor(
         return "PR #$number merged ($method)."
     }
 
+    private fun createPr(input: Map<String, Any>, token: String?): String {
+        val (owner, repo) = requireRepo(input) ?: return "Missing 'repo' (owner/repo)."
+        val title = input["title"] as? String ?: return "Missing 'title'."
+        val head = input["head"] as? String ?: return "Missing 'head' (the branch with your changes)."
+        val base = input["base"] as? String ?: defaultBranch(owner, repo, token)
+            ?: return "Missing 'base' and could not auto-detect the repo's default branch."
+        val bodyText = input["body"] as? String ?: ""
+        val draft = (input["draft"] as? Boolean) ?: false
+
+        val payload = JSONObject().apply {
+            put("title", title)
+            put("head", head)
+            put("base", base)
+            if (bodyText.isNotBlank()) put("body", bodyText)
+            put("draft", draft)
+        }.toString()
+
+        val (code, respBody) = call(newRequest("/repos/$owner/$repo/pulls", token, "POST", payload))
+        if (code !in 200..299) return handleError(code, respBody)
+        val pr = JSONObject(respBody)
+        val draftLabel = if (pr.optBoolean("draft")) " (draft)" else ""
+        return "Opened PR #${pr.getInt("number")}$draftLabel: ${pr.getString("title")}\n" +
+            "$head → $base\n" +
+            pr.getString("html_url")
+    }
+
+    private fun createBranch(input: Map<String, Any>, token: String?): String {
+        val (owner, repo) = requireRepo(input) ?: return "Missing 'repo' (owner/repo)."
+        val newBranch = input["branch"] as? String
+            ?: return "Missing 'branch' (the new branch name to create)."
+        val from = (input["from_branch"] as? String) ?: defaultBranch(owner, repo, token)
+            ?: return "Missing 'from_branch' and could not auto-detect the repo's default branch."
+
+        // Resolve the source branch's head SHA via /repos/{o}/{r}/git/ref/heads/{from}
+        val refPath = "/repos/$owner/$repo/git/ref/heads/${java.net.URLEncoder.encode(from, "UTF-8")}"
+        val (refCode, refBody) = call(newRequest(refPath, token))
+        if (refCode !in 200..299) return handleError(refCode, refBody)
+        val sourceSha = JSONObject(refBody).getJSONObject("object").getString("sha")
+
+        // Create the new ref
+        val payload = JSONObject().apply {
+            put("ref", "refs/heads/$newBranch")
+            put("sha", sourceSha)
+        }.toString()
+        val (code, body) = call(newRequest("/repos/$owner/$repo/git/refs", token, "POST", payload))
+        if (code !in 200..299) return handleError(code, body)
+        return "Created branch '$newBranch' in $owner/$repo from '$from' (${sourceSha.take(7)})."
+    }
+
+    /**
+     * Look up the repo's default branch via /repos/{owner}/{repo}.
+     * Returns null on any failure so callers can fall back to an explicit error.
+     */
+    private fun defaultBranch(owner: String, repo: String, token: String?): String? {
+        return try {
+            val (code, body) = call(newRequest("/repos/$owner/$repo", token))
+            if (code !in 200..299) null
+            else JSONObject(body).optString("default_branch").ifBlank { null }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     // ── Issues ──
 
     private fun listIssues(input: Map<String, Any>, token: String?): String {
@@ -345,20 +418,144 @@ class GitHubToolHandler @Inject constructor(
     // ── Repos / user ──
 
     private fun listRepos(input: Map<String, Any>, token: String?): String {
+        val org = input["org"] as? String
         val user = input["user"] as? String
         val limit = (input["limit"] as? Number)?.toInt() ?: 30
-        val path = if (user != null) "/users/$user/repos?per_page=$limit&sort=updated"
-                   else "/user/repos?per_page=$limit&sort=updated"
+        val path = when {
+            org != null -> "/orgs/$org/repos?per_page=$limit&sort=updated"
+            user != null -> "/users/$user/repos?per_page=$limit&sort=updated"
+            else -> "/user/repos?per_page=$limit&sort=updated"
+        }
         val (code, body) = call(newRequest(path, token))
         if (code !in 200..299) return handleError(code, body)
         val arr = JSONArray(body)
         if (arr.length() == 0) return "No repos found."
-        val sb = StringBuilder("Repos:\n")
+        val header = when {
+            org != null -> "Repos in @$org:"
+            user != null -> "Repos for @$user:"
+            else -> "Your repos:"
+        }
+        val sb = StringBuilder("$header\n")
         for (i in 0 until arr.length()) {
             val r = arr.getJSONObject(i)
-            sb.append("- ${r.getString("full_name")} ⭐${r.optInt("stargazers_count")} — ${r.optString("description", "")}\n")
+            val visibility = if (r.optBoolean("private")) " 🔒" else ""
+            sb.append("- ${r.getString("full_name")}$visibility ⭐${r.optInt("stargazers_count")} — ${r.optString("description", "")}\n")
         }
         return sb.toString().trim()
+    }
+
+    // ── Organizations ──
+
+    private fun listOrgs(input: Map<String, Any>, token: String?): String {
+        val username = input["username"] as? String
+        val path = if (username != null) "/users/$username/orgs" else "/user/orgs"
+        val (code, body) = call(newRequest(path, token))
+        if (code !in 200..299) return handleError(code, body)
+        val arr = JSONArray(body)
+        if (arr.length() == 0) {
+            return if (username != null) "@$username has no public organizations."
+                   else "You don't belong to any organizations (or your token lacks read:org scope)."
+        }
+        val sb = StringBuilder(if (username != null) "Orgs for @$username:\n" else "Your organizations:\n")
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            sb.append("- @${o.getString("login")}")
+            val desc = o.optString("description", "")
+            if (desc.isNotBlank()) sb.append(" — $desc")
+            sb.append("\n")
+        }
+        return sb.toString().trim()
+    }
+
+    private fun viewOrg(input: Map<String, Any>, token: String?): String {
+        val org = input["org"] as? String ?: return "Missing 'org' (organization login)."
+        val (code, body) = call(newRequest("/orgs/$org", token))
+        if (code !in 200..299) return handleError(code, body)
+        val o = JSONObject(body)
+        return buildString {
+            append("Organization: @${o.getString("login")}\n")
+            if (o.optString("name").isNotBlank()) append("Name: ${o.getString("name")}\n")
+            if (o.optString("description").isNotBlank()) append("Description: ${o.getString("description")}\n")
+            if (o.optString("location").isNotBlank()) append("Location: ${o.getString("location")}\n")
+            if (o.optString("blog").isNotBlank()) append("Blog: ${o.getString("blog")}\n")
+            append("Public repos: ${o.optInt("public_repos")} | Followers: ${o.optInt("followers")}\n")
+            append("URL: ${o.optString("html_url")}")
+        }
+    }
+
+    private fun listOrgMembers(input: Map<String, Any>, token: String?): String {
+        val org = input["org"] as? String ?: return "Missing 'org' (organization login)."
+        val limit = (input["limit"] as? Number)?.toInt() ?: 30
+        val (code, body) = call(newRequest("/orgs/$org/members?per_page=$limit", token))
+        if (code !in 200..299) return handleError(code, body)
+        val arr = JSONArray(body)
+        if (arr.length() == 0) return "No visible members in @$org (token may lack read:org scope)."
+        val sb = StringBuilder("Members of @$org:\n")
+        for (i in 0 until arr.length()) {
+            val m = arr.getJSONObject(i)
+            sb.append("- @${m.getString("login")}\n")
+        }
+        return sb.toString().trim()
+    }
+
+    private fun listOrgTeams(input: Map<String, Any>, token: String?): String {
+        val org = input["org"] as? String ?: return "Missing 'org' (organization login)."
+        val limit = (input["limit"] as? Number)?.toInt() ?: 30
+        val (code, body) = call(newRequest("/orgs/$org/teams?per_page=$limit", token))
+        if (code !in 200..299) return handleError(code, body)
+        val arr = JSONArray(body)
+        if (arr.length() == 0) return "No teams visible in @$org (token may lack read:org scope)."
+        val sb = StringBuilder("Teams in @$org:\n")
+        for (i in 0 until arr.length()) {
+            val t = arr.getJSONObject(i)
+            sb.append("- ${t.getString("name")} (${t.getString("slug")})")
+            val desc = t.optString("description", "")
+            if (desc.isNotBlank()) sb.append(" — $desc")
+            sb.append("\n")
+        }
+        return sb.toString().trim()
+    }
+
+    private fun listOrgIssues(input: Map<String, Any>, token: String?): String {
+        val org = input["org"] as? String ?: return "Missing 'org' (organization login)."
+        val state = (input["state"] as? String) ?: "open"
+        val limit = (input["limit"] as? Number)?.toInt() ?: 30
+        val (code, body) = call(newRequest("/orgs/$org/issues?state=$state&per_page=$limit", token))
+        if (code !in 200..299) return handleError(code, body)
+        val arr = JSONArray(body)
+        val sb = StringBuilder("$state issues across @$org:\n")
+        var count = 0
+        for (i in 0 until arr.length()) {
+            val issue = arr.getJSONObject(i)
+            // Filter PRs (the /issues endpoint includes them)
+            if (issue.has("pull_request")) continue
+            val repo = issue.optJSONObject("repository")?.optString("full_name") ?: "?"
+            sb.append("[$repo] #${issue.getInt("number")} ${issue.getString("title")} — @${issue.getJSONObject("user").getString("login")}\n")
+            count++
+        }
+        return if (count == 0) "No $state issues across @$org." else sb.toString().trim()
+    }
+
+    private fun createRepo(input: Map<String, Any>, token: String?): String {
+        val name = input["name"] as? String ?: return "Missing 'name' (new repository name)."
+        val org = input["org"] as? String
+        val description = input["description"] as? String
+        val isPrivate = (input["private"] as? Boolean) ?: false
+        val autoInit = (input["auto_init"] as? Boolean) ?: true
+
+        val payload = JSONObject().apply {
+            put("name", name)
+            if (description != null) put("description", description)
+            put("private", isPrivate)
+            put("auto_init", autoInit)
+        }.toString()
+
+        val path = if (org != null) "/orgs/$org/repos" else "/user/repos"
+        val (code, body) = call(newRequest(path, token, "POST", payload))
+        if (code !in 200..299) return handleError(code, body)
+        val r = JSONObject(body)
+        val visibility = if (r.optBoolean("private")) "private" else "public"
+        return "Created $visibility repo ${r.getString("full_name")}\n${r.optString("html_url")}"
     }
 
     private fun listNotifications(token: String?): String {

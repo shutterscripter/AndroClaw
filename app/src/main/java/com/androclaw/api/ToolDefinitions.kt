@@ -41,7 +41,10 @@ object ToolDefinitions {
             skills(),
             screenTime(),
             schedule(),
-            github()
+            github(),
+            screenObserve(),
+            navigateGuide(),
+            think()
         )
         return if (enabledTools != null) {
             all.filter { it.name in enabledTools }
@@ -142,12 +145,12 @@ object ToolDefinitions {
 
     private fun browseWeb() = ToolDefinition(
         name = "browse_web",
-        description = "Open a URL in the browser or perform a Google search.",
+        description = "Open a URL in the user's browser app. Use ONLY when the user explicitly wants to visit a website in their browser (e.g. 'open youtube.com', 'launch twitter'). DO NOT use this to answer factual questions or look up information — for that ALWAYS use web_search, which returns real text results (via Exa when configured) you can reason about without leaving the app.",
         inputSchema = InputSchema(
             properties = mapOf(
-                "url" to PropertySchema(type = "string", description = "URL to open"),
-                "search_query" to PropertySchema(type = "string", description = "Google search query")
-            )
+                "url" to PropertySchema(type = "string", description = "URL to open in the browser")
+            ),
+            required = listOf("url")
         )
     )
 
@@ -395,7 +398,7 @@ object ToolDefinitions {
 
     private fun webSearch() = ToolDefinition(
         name = "web_search",
-        description = "Search the web and return actual text results. Use this to answer factual questions, look up current information, find news, or research topics. Returns titles, snippets, and URLs.",
+        description = "Search the web and return actual text results (titles, highlighted snippets, URLs) that you can read and reason about in-chat. USE THIS for ANY factual lookup, news, current events, research, 'what is', 'who is', 'today's <anything>', crypto prices, scores, etc. Powered by Exa neural search when an Exa API key is configured in Settings (strongly preferred, high-quality results), otherwise falls back to DuckDuckGo/Google scraping. This is the DEFAULT way to answer anything that needs current information — do NOT use browse_web for questions; browse_web only opens a browser app.",
         inputSchema = InputSchema(
             properties = mapOf(
                 "query" to PropertySchema(type = "string", description = "The search query"),
@@ -597,13 +600,13 @@ object ToolDefinitions {
 
     private fun controlAppUi() = ToolDefinition(
         name = "control_app_ui",
-        description = "Control another app's UI via accessibility. Can tap buttons/text, type in fields, scroll, navigate back/home, and wait between actions. The app is launched automatically. Use this for complex multi-step interactions within other apps.",
+        description = "Control another app's UI via accessibility. The MOST RELIABLE pattern is to call screen_observe FIRST to get a marked-up screenshot with numbered interactive elements, then come back here with action {\"type\":\"tap_mark\",\"mark\":N}. Other supported action types: {\"type\":\"tap_at\",\"x\":<px>,\"y\":<px>} for raw pixel taps, {\"type\":\"swipe\",\"direction\":\"up|down|left|right\",\"duration_ms\":250} for swipes, {\"type\":\"type\",\"text\":\"hello\"} to type into the focused field, {\"type\":\"scroll\",\"direction\":\"up|down\"} to scroll the first scrollable container, {\"type\":\"wait\",\"ms\":1000}, {\"type\":\"back\"}, {\"type\":\"home\"}. Legacy text-based tapping is still supported via {\"type\":\"tap\",\"target\":\"text:Label\"} or {\"type\":\"tap\",\"target\":\"id:full.view.id\"} but is fragile on Compose / React Native / custom-UI apps — prefer tap_mark there. The app is launched automatically when app_package is set.",
         inputSchema = InputSchema(
             properties = mapOf(
-                "app_package" to PropertySchema(type = "string", description = "Package name of the target app"),
+                "app_package" to PropertySchema(type = "string", description = "Package name of the target app to launch first (optional — leave blank to act on whatever's already on screen)"),
                 "actions" to PropertySchema(
                     type = "array",
-                    description = "List of UI actions: {type:'tap', target:'text:ButtonLabel'}, {type:'tap', target:'id:com.app:id/button'}, {type:'type', text:'hello'}, {type:'scroll', direction:'down'}, {type:'wait', ms:1000}, {type:'back'}, {type:'home'}",
+                    description = "Ordered list of UI actions to perform. See the tool description for the supported action types.",
                     items = PropertySchema(type = "object", description = "Action with 'type' and params")
                 )
             ),
@@ -611,45 +614,103 @@ object ToolDefinitions {
         )
     )
 
+    // --- Screen observation (Set-of-Mark perception) ---
+
+    private fun screenObserve() = ToolDefinition(
+        name = "screen_observe",
+        description = "Capture the current screen and return a marked-up screenshot with numbered colored boxes around every interactive element (a Set-of-Mark overlay), plus a text legend mapping each mark id to its role/label/coordinates. Use this BEFORE control_app_ui whenever you're operating on a third-party app whose accessibility tree is unreliable (Instagram, TikTok, Snapchat, Discord, anything Compose / React Native / Flutter / custom-canvas). When the a11y tree is sparse, ML Kit OCR fills in additional text-based marks. After observing, pick a mark number from the legend and call control_app_ui with action {\"type\":\"tap_mark\",\"mark\":N}. Optionally launches a target app first via app_package. Requires the accessibility service AND Android 11+ for screenshot capture.",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "app_package" to PropertySchema(type = "string", description = "Optional package name to launch before observing (e.g. 'com.instagram.android'). Omit to observe the current foreground app.")
+            ),
+            required = emptyList()
+        )
+    )
+
+    // --- Navigation guide (user-guided flows) ---
+
+    private fun navigateGuide() = ToolDefinition(
+        name = "navigate_guide",
+        description = "Guide the user step-by-step through an in-app flow (payments, settings, signups, etc.) by drawing a pulsing highlight ring with an arrow + caption over the next UI element they should tap. Unlike control_app_ui, this does NOT auto-click by default — it lets the user tap safely themselves, which is the right pattern for anything sensitive like sending money. Usage: provide `hint` = the visible text/label of the next element (fuzzy/case-insensitive match against text and contentDescription; clickable elements are preferred). Optional `instruction` overrides the caption shown next to the highlight. Optional `app_package` launches a specific app first. Set `auto_tap=true` only when the user has explicitly asked for full automation. Chain this: call navigate_guide with the next hint after each user tap, optionally using screen_observe in between to verify the new screen. Use `action='dismiss'` to remove the highlight. Requires the AndroClaw accessibility service.",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "hint" to PropertySchema(type = "string", description = "Visible text or contentDescription of the element to highlight (e.g. 'Pay', 'Rucha', 'Proceed to Pay', 'Next'). Fuzzy, case-insensitive."),
+                "instruction" to PropertySchema(type = "string", description = "SHORT caption shown on the overlay card (≤ 6 words, imperative). Examples: 'Tap Amit Sharma', 'Enter amount', 'Confirm payment'. ALWAYS provide this — the default fallback is ugly. Keep it human and specific to the current step."),
+                "step" to PropertySchema(type = "number", description = "Step number in the flow (1-indexed). Shown as 'STEP N' on the card above the instruction. Pass this on every call in a multi-step flow."),
+                "total_steps" to PropertySchema(type = "number", description = "Total steps in the flow. When set with `step`, the card shows 'STEP N OF M' so the user knows how much is left."),
+                "app_package" to PropertySchema(type = "string", description = "Optional package to launch before highlighting (e.g. 'net.one97.paytm', 'com.phonepe.app')."),
+                "auto_tap" to PropertySchema(type = "boolean", description = "If true, auto-click the element after highlighting it. Default false — prefer letting the user tap sensitive actions themselves."),
+                "duration_ms" to PropertySchema(type = "number", description = "How long (ms) to keep the highlight visible. Default 6000."),
+                "action" to PropertySchema(type = "string", description = "Set to 'dismiss' to hide the current highlight without showing a new one.", enum = listOf("highlight", "dismiss"))
+            ),
+            required = emptyList()
+        )
+    )
+
+    // --- Think (deliberate pause before acting) ---
+
+    private fun think() = ToolDefinition(
+        name = "think",
+        description = "Pause and write out a short plan before your next action. Use this IMMEDIATELY after any screen_observe or take_screenshot call — read the screen, decide what the user actually wants next, and spell it out in `thought` before calling navigate_guide / control_app_ui / etc. Also use it at the start of any multi-step flow (payments, settings walkthroughs, signups) to lay out the full step list. This tool does nothing except log your reasoning to the transcript, but it dramatically improves reliability on multi-step UI flows because you're not forced to pick the next tap blind. Format `thought` as: what I see (1 line) → goal (1 line) → next step (1 line). Example: 'See PhonePe home with Pay button visible. Goal: send ₹100 to Rucha. Next: tap Pay to open recipient picker.'",
+        inputSchema = InputSchema(
+            properties = mapOf(
+                "thought" to PropertySchema(type = "string", description = "Your reasoning — 1 to 4 short lines. Include what you see on screen, the user's goal, and the single next concrete action.")
+            ),
+            required = listOf("thought")
+        )
+    )
+
     // --- GitHub ---
 
     private fun github() = ToolDefinition(
         name = "github",
-        description = "GitHub operations via the GitHub REST API: PRs, issues, CI workflow runs, repos, notifications, search, and direct file editing (read/write/delete files in any repo, committing straight to a branch via the Contents API). Use for: checking PR status/CI, creating or commenting on issues, viewing workflow runs, searching repos, browsing repo contents, and editing files in a repo from your phone. Always pass repo as 'owner/repo'. Requires a GitHub Personal Access Token with appropriate scopes (set in Settings → GitHub) — file writes need contents:write / repo scope.",
+        description = "GitHub operations via the GitHub REST API: PRs (list/view/create/comment/merge), issues, CI workflow runs, repos (personal AND organization), organizations (members, teams, repos, cross-repo issues), notifications, search, repo creation, branch creation, and direct file editing (read/write/delete files in any repo, committing straight to a branch via the Contents API). Supports the full fix-an-issue flow end-to-end: view_issue → list_dir/read_file (gather context) → create_branch → write_file (one or more files on the new branch) → create_pr. Always pass repo as 'owner/repo' (owner can be a user OR an organization). Requires a GitHub Personal Access Token with appropriate scopes (set in Settings → GitHub) — file writes need contents:write / repo scope; org actions need read:org (and admin:org for create_repo in an org).",
         inputSchema = InputSchema(
             properties = mapOf(
                 "action" to PropertySchema(
                     type = "string",
                     description = "GitHub action to perform",
                     enum = listOf(
-                        "list_prs", "view_pr", "pr_checks", "create_pr_comment", "merge_pr",
+                        "list_prs", "view_pr", "pr_checks", "create_pr", "create_pr_comment", "merge_pr",
                         "list_issues", "view_issue", "create_issue", "comment_issue", "close_issue",
                         "list_runs", "view_run", "rerun",
                         "list_repos", "list_notifications",
                         "search_repos", "search_issues",
                         "get_user",
+                        "list_orgs", "view_org", "list_org_members", "list_org_teams", "list_org_issues",
+                        "create_repo",
                         "read_file", "write_file", "delete_file", "list_dir",
+                        "create_branch",
                         "api"
                     )
                 ),
-                "repo" to PropertySchema(type = "string", description = "Repository in owner/repo form (e.g. 'openclaw/openclaw')"),
+                "repo" to PropertySchema(type = "string", description = "Repository in owner/repo form (e.g. 'openclaw/openclaw' or 'myorg/myrepo'). owner may be a user OR an organization."),
+                "org" to PropertySchema(type = "string", description = "Organization login (for list_orgs/view_org/list_org_members/list_org_teams/list_org_issues, list_repos in an org, and create_repo inside an org)."),
                 "number" to PropertySchema(type = "number", description = "PR or issue number"),
-                "state" to PropertySchema(type = "string", description = "Filter state: open, closed, all (for list_prs/list_issues)", enum = listOf("open", "closed", "all")),
-                "limit" to PropertySchema(type = "number", description = "Max results (default 10–20 depending on action)"),
-                "title" to PropertySchema(type = "string", description = "Title (for create_issue)"),
+                "state" to PropertySchema(type = "string", description = "Filter state: open, closed, all (for list_prs/list_issues/list_org_issues)", enum = listOf("open", "closed", "all")),
+                "limit" to PropertySchema(type = "number", description = "Max results (default 10–30 depending on action)"),
+                "title" to PropertySchema(type = "string", description = "Title (for create_issue / create_pr)"),
+                "head" to PropertySchema(type = "string", description = "Head branch with the changes (for create_pr). Use 'user:branch' for cross-fork PRs."),
+                "base" to PropertySchema(type = "string", description = "Base branch the PR merges into (for create_pr). Defaults to the repo's default branch."),
+                "from_branch" to PropertySchema(type = "string", description = "Source branch to fork from (for create_branch). Defaults to the repo's default branch."),
+                "draft" to PropertySchema(type = "boolean", description = "Open the PR as a draft (for create_pr). Defaults to false."),
                 "body" to PropertySchema(type = "string", description = "Body text for issue/PR comment, create_issue, or raw API request body"),
                 "merge_method" to PropertySchema(type = "string", description = "Merge method (for merge_pr)", enum = listOf("merge", "squash", "rebase")),
                 "run_id" to PropertySchema(type = "number", description = "Workflow run ID (for view_run / rerun)"),
                 "failed_only" to PropertySchema(type = "boolean", description = "Only re-run failed jobs (for rerun)"),
-                "user" to PropertySchema(type = "string", description = "GitHub username (for list_repos)"),
-                "username" to PropertySchema(type = "string", description = "GitHub username (for get_user; omit to get the authenticated user)"),
+                "user" to PropertySchema(type = "string", description = "GitHub username (for list_repos under a user)"),
+                "username" to PropertySchema(type = "string", description = "GitHub username (for get_user / list_orgs; omit to use the authenticated user)"),
                 "query" to PropertySchema(type = "string", description = "Search query (for search_repos / search_issues — uses GitHub search syntax)"),
                 "path" to PropertySchema(type = "string", description = "File path inside the repo (for read_file/write_file/delete_file/list_dir) or raw API path starting with / (for action 'api')"),
                 "content" to PropertySchema(type = "string", description = "Full new file content as plain text (for write_file). Will be base64-encoded automatically."),
-                "branch" to PropertySchema(type = "string", description = "Branch name for read/write/delete/list_dir (defaults to the repo's default branch)"),
+                "branch" to PropertySchema(type = "string", description = "Branch name for read/write/delete/list_dir (defaults to the repo's default branch). For create_branch, this is the NEW branch name to create."),
                 "sha" to PropertySchema(type = "string", description = "File SHA (optional for write_file/delete_file — auto-fetched if omitted; only needed to avoid the auto-probe)"),
                 "message" to PropertySchema(type = "string", description = "Commit message (for write_file/delete_file)"),
-                "method" to PropertySchema(type = "string", description = "HTTP method for raw API call", enum = listOf("GET", "POST", "PUT", "PATCH", "DELETE"))
+                "method" to PropertySchema(type = "string", description = "HTTP method for raw API call", enum = listOf("GET", "POST", "PUT", "PATCH", "DELETE")),
+                "name" to PropertySchema(type = "string", description = "New repository name (for create_repo)"),
+                "description" to PropertySchema(type = "string", description = "Repository description (for create_repo)"),
+                "private" to PropertySchema(type = "boolean", description = "Whether the new repo should be private (for create_repo). Defaults to false."),
+                "auto_init" to PropertySchema(type = "boolean", description = "Auto-initialize the new repo with an empty README (for create_repo). Defaults to true.")
             ),
             required = listOf("action")
         )

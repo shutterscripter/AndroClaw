@@ -43,6 +43,9 @@ class OverlayChatManager(
     private val _toolStatus = MutableStateFlow<String?>(null)
     val toolStatus: StateFlow<String?> = _toolStatus
 
+    private val _streamingText = MutableStateFlow<String?>(null)
+    val streamingText: StateFlow<String?> = _streamingText
+
     init {
         // Observe agent events
         scope.launch {
@@ -53,6 +56,13 @@ class OverlayChatManager(
                     }
                     is com.androclaw.api.AgentEvent.ToolCompleted -> {
                         _toolStatus.value = null
+                    }
+                    is com.androclaw.api.AgentEvent.StreamingText -> {
+                        _toolStatus.value = null
+                        _streamingText.value = (_streamingText.value ?: "") + event.delta
+                    }
+                    is com.androclaw.api.AgentEvent.FinalResponse -> {
+                        _streamingText.value = null
                     }
                     else -> {}
                 }
@@ -133,6 +143,7 @@ class OverlayChatManager(
             conversationDao.touchConversation(convId)
 
             _isLoading.value = true
+            _streamingText.value = null
 
             val result = repository.sendMessage(conversationHistory, text)
             result.fold(
@@ -164,6 +175,7 @@ class OverlayChatManager(
                 }
             )
             _isLoading.value = false
+            _streamingText.value = null
         }
     }
 
@@ -171,6 +183,7 @@ class OverlayChatManager(
         scope.launch {
             messagesJob?.cancel()
             messagesJob = null
+            _streamingText.value = null
             conversationHistory.clear()
             _messages.value = emptyList()
             val newId = conversationDao.insert(ConversationEntity())

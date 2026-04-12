@@ -41,6 +41,10 @@ class ToolExecutor @Inject constructor(
     private val usageStatsHandler: UsageStatsToolHandler,
     private val scheduleHandler: ScheduleToolHandler,
     private val githubHandler: GitHubToolHandler,
+    private val screenObserveHandler: ScreenObserveToolHandler,
+    private val navigateHandler: NavigateToolHandler,
+    private val thinkHandler: ThinkToolHandler,
+    private val screenCache: ScreenObservationCache,
     val interceptor: ToolInterceptor
 ) {
 
@@ -66,7 +70,7 @@ class ToolExecutor @Inject constructor(
     private suspend fun dispatch(toolName: String, input: Map<String, Any>): String {
         return when (toolName) {
             "send_sms" -> smsHandler.execute(input)
-            "open_app" -> appLaunchHandler.execute(input)
+            "open_app" -> withAutoScreenshot(appLaunchHandler.execute(input), waitMs = 1200)
             "list_apps" -> appLaunchHandler.listApps(input)
             "browse_web" -> browserHandler.execute(input)
             "toggle_setting" -> wifiHandler.execute(input)
@@ -86,7 +90,7 @@ class ToolExecutor @Inject constructor(
             "notifications" -> notificationHandler.execute(input)
             "send_email" -> emailHandler.execute(input)
             "auto_scroll_feed" -> autoScrollHandler.execute(input)
-            "control_app_ui" -> executeAccessibilityAction(input)
+            "control_app_ui" -> withAutoScreenshot(executeAccessibilityAction(input), waitMs = 600)
             "web_search" -> webSearchHandler.execute(input)
             "web_fetch" -> webFetchHandler.execute(input)
             "memory" -> memoryHandler.execute(input)
@@ -99,8 +103,35 @@ class ToolExecutor @Inject constructor(
             "screen_time" -> usageStatsHandler.execute(input)
             "schedule" -> scheduleHandler.execute(input)
             "github" -> githubHandler.execute(input)
+            "screen_observe" -> screenObserveHandler.execute(input)
+            "navigate_guide" -> navigateHandler.execute(input)
+            "think" -> thinkHandler.execute(input)
             else -> "Unknown tool: $toolName"
         }
+    }
+
+    /**
+     * Wraps a navigation tool result so the LLM automatically receives a
+     * fresh screenshot of whatever ended up on screen — no explicit
+     * `take_screenshot` call required. The original textual result is
+     * shipped alongside the image as the legend, via the
+     * `||LEGEND||` separator that ClaudeRepository.buildToolResultBlock
+     * understands.
+     *
+     * If capture isn't possible (no a11y, no MediaProjection) or the
+     * underlying tool already returned an image (e.g. it bubbled up a
+     * `[IMAGE_BASE64:` payload), we leave the result untouched.
+     */
+    private suspend fun withAutoScreenshot(result: String, waitMs: Long): String {
+        if (result.startsWith("[IMAGE_BASE64:")) return result
+        // Give the UI a moment to render the new state before snapping.
+        if (waitMs > 0) kotlinx.coroutines.delay(waitMs)
+        val shot = try {
+            screenshotHandler.captureForAi(legend = result)
+        } catch (_: Exception) {
+            null
+        }
+        return shot ?: result
     }
 
     private suspend fun executeAccessibilityAction(input: Map<String, Any>): String {
@@ -133,6 +164,37 @@ class ToolExecutor @Inject constructor(
                             service.tapByText(target.removePrefix("text:"))
                         }
                     }
+                    "tap_mark" -> {
+                        val mark = (action["mark"] as? Number)?.toInt()
+                        if (mark == null) {
+                            "tap_mark needs a 'mark' integer (from a prior screen_observe call)"
+                        } else {
+                            val element = screenCache.getMark(mark)
+                            if (element == null) {
+                                "Mark $mark not found. Call screen_observe first to refresh marks " +
+                                    "(cache age: ${screenCache.ageMs()}ms)."
+                            } else {
+                                service.tapAtCoordinates(
+                                    element.centerX.toFloat(),
+                                    element.centerY.toFloat()
+                                ) + " (mark $mark: ${element.role} \"${element.label.take(30)}\")"
+                            }
+                        }
+                    }
+                    "tap_at" -> {
+                        val x = (action["x"] as? Number)?.toFloat()
+                        val y = (action["y"] as? Number)?.toFloat()
+                        if (x == null || y == null) {
+                            "tap_at needs both 'x' and 'y' pixel coordinates"
+                        } else {
+                            service.tapAtCoordinates(x, y)
+                        }
+                    }
+                    "swipe" -> {
+                        val direction = action["direction"] as? String ?: "up"
+                        val durationMs = (action["duration_ms"] as? Number)?.toLong() ?: 250L
+                        service.performSwipeGesture(direction, durationMs)
+                    }
                     "type" -> {
                         val text = action["text"] as? String ?: ""
                         service.typeText(text)
@@ -152,7 +214,7 @@ class ToolExecutor @Inject constructor(
                 }
                 results.add(result)
                 // Small delay between actions for stability
-                kotlinx.coroutines.delay(300)
+                kotlinx.coroutines.delay(200)
             }
         }
         return results.joinToString("\n")

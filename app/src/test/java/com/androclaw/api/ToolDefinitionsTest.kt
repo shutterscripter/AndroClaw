@@ -60,4 +60,56 @@ class ToolDefinitionsTest {
         val github = ToolDefinitions.getAllTools().single { it.name == "github" }
         assertThat(github.inputSchema.required).contains("action")
     }
+
+    @Test
+    fun `github tool exposes organization actions`() {
+        val github = ToolDefinitions.getAllTools().single { it.name == "github" }
+        val enumValues = github.inputSchema.properties["action"]!!.enum.orEmpty()
+        assertThat(enumValues).containsAtLeast(
+            "list_orgs", "view_org", "list_org_members", "list_org_teams",
+            "list_org_issues", "create_repo"
+        )
+    }
+
+    @Test
+    fun `github tool input schema exposes org-related properties`() {
+        val github = ToolDefinitions.getAllTools().single { it.name == "github" }
+        val props = github.inputSchema.properties
+        assertThat(props.keys).containsAtLeast("org", "name", "description", "private", "auto_init")
+        assertThat(props["private"]!!.type).isEqualTo("boolean")
+        assertThat(props["auto_init"]!!.type).isEqualTo("boolean")
+    }
+
+    @Test
+    fun `github tool exposes create_branch and create_pr actions`() {
+        val github = ToolDefinitions.getAllTools().single { it.name == "github" }
+        val enumValues = github.inputSchema.properties["action"]!!.enum.orEmpty()
+        assertThat(enumValues).containsAtLeast("create_branch", "create_pr")
+    }
+
+    @Test
+    fun `github tool input schema exposes pr-and-branch properties`() {
+        val github = ToolDefinitions.getAllTools().single { it.name == "github" }
+        val props = github.inputSchema.properties
+        assertThat(props.keys).containsAtLeast("head", "base", "from_branch", "draft")
+        assertThat(props["draft"]!!.type).isEqualTo("boolean")
+    }
+
+    @Test
+    fun `screen_observe tool is registered with optional app_package`() {
+        val obs = ToolDefinitions.getAllTools().single { it.name == "screen_observe" }
+        assertThat(obs.description).contains("Set-of-Mark")
+        assertThat(obs.inputSchema.properties.keys).contains("app_package")
+        // app_package is optional — observe whatever's on screen by default
+        assertThat(obs.inputSchema.required).isEmpty()
+    }
+
+    @Test
+    fun `control_app_ui description advertises tap_mark tap_at and swipe action types`() {
+        val ctl = ToolDefinitions.getAllTools().single { it.name == "control_app_ui" }
+        assertThat(ctl.description).contains("tap_mark")
+        assertThat(ctl.description).contains("tap_at")
+        assertThat(ctl.description).contains("swipe")
+        assertThat(ctl.description).contains("screen_observe")
+    }
 }

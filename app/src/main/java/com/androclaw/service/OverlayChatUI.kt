@@ -6,8 +6,15 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,7 +55,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -60,118 +69,207 @@ import com.androclaw.ui.theme.Accent
 @Composable
 fun OverlayChatUI(
     chatManager: OverlayChatManager,
-    onClose: () -> Unit
+    visible: Boolean,
+    onClose: () -> Unit,
+    onResize: ((deltaX: Float, deltaY: Float) -> Unit)? = null,
+    onMove: ((deltaX: Float, deltaY: Float) -> Unit)? = null
 ) {
     val messages by chatManager.messages.collectAsState()
     val isLoading by chatManager.isLoading.collectAsState()
     val toolStatus by chatManager.toolStatus.collectAsState()
+    val streamingText by chatManager.streamingText.collectAsState()
     val listState = rememberLazyListState()
 
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+    // Auto-scroll on new messages and streaming text growth
+    LaunchedEffect(messages.size, streamingText?.length ?: 0) {
+        val hasStreaming = !streamingText.isNullOrEmpty()
+        val total = messages.size + (if (hasStreaming) 1 else 0)
+        if (total > 0) {
+            listState.animateScrollToItem(total - 1)
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .clip(RoundedCornerShape(20.dp))
-            .background(MaterialTheme.colorScheme.background)
-    ) {
-        // Header
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            AppIcon(size = 28.dp)
-            Spacer(modifier = Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "AndroClaw",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = if (isLoading) "Thinking..." else "Online",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isLoading) Accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                )
-            }
-            // New chat
-            IconButton(
-                onClick = { chatManager.startNewChat() },
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    Icons.Outlined.Add,
-                    contentDescription = "New chat",
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            // Close
-            IconButton(
-                onClick = onClose,
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    Icons.Outlined.Close,
-                    contentDescription = "Close",
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
+    val transitionState = remember { MutableTransitionState(false) }
+    LaunchedEffect(visible) { transitionState.targetState = visible }
 
-        // Messages
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
-            verticalArrangement = Arrangement.Bottom
+    Box(modifier = Modifier.fillMaxSize()) {
+        AnimatedVisibility(
+            visibleState = transitionState,
+            enter = fadeIn(animationSpec = tween(220)) +
+                    scaleIn(
+                        animationSpec = tween(260),
+                        initialScale = 0.85f,
+                        transformOrigin = TransformOrigin(0.5f, 1f)
+                    ),
+            exit = fadeOut(animationSpec = tween(180)) +
+                    scaleOut(
+                        animationSpec = tween(220),
+                        targetScale = 0.85f,
+                        transformOrigin = TransformOrigin(0.5f, 1f)
+                    )
         ) {
-            if (messages.isEmpty() && !isLoading) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            AppIcon(size = 48.dp)
-                            Spacer(modifier = Modifier.height(12.dp))
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(20.dp))
+                .background(MaterialTheme.colorScheme.background)
+        ) {
+            // Header — draggable to move the overlay
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (onMove != null) {
+                            Modifier.pointerInput(Unit) {
+                                detectDragGestures { change, dragAmount ->
+                                    change.consume()
+                                    onMove(dragAmount.x, dragAmount.y)
+                                }
+                            }
+                        } else Modifier
+                    )
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AppIcon(size = 28.dp)
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "AndroClaw",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = if (isLoading) "Thinking..." else "Online",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isLoading) Accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                }
+                // New chat
+                IconButton(
+                    onClick = { chatManager.startNewChat() },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.Add,
+                        contentDescription = "New chat",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                // Close
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.Close,
+                        contentDescription = "Close",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Messages
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp),
+                verticalArrangement = Arrangement.Bottom
+            ) {
+                if (messages.isEmpty() && !isLoading) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                AppIcon(size = 48.dp)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "Ask me anything...",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                items(messages, key = { it.id }) { msg ->
+                    OverlayMessageBubble(msg)
+                }
+
+                // Live streaming bubble — token-by-token text
+                if (!streamingText.isNullOrEmpty()) {
+                    item(key = "streaming-bubble") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 8.dp, end = 40.dp, top = 3.dp, bottom = 3.dp),
+                            horizontalArrangement = Arrangement.Start
+                        ) {
+                            AppIcon(size = 22.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Ask me anything...",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                text = streamingText!!,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(horizontal = 12.dp, vertical = 8.dp)
                             )
                         }
                     }
                 }
+
+                if (isLoading && streamingText.isNullOrEmpty()) {
+                    item { OverlayThinkingDots(toolStatus) }
+                }
             }
 
-            items(messages, key = { it.id }) { msg ->
-                OverlayMessageBubble(msg)
-            }
-
-            if (isLoading) {
-                item { OverlayThinkingDots(toolStatus) }
-            }
+            // Input
+            OverlayInputBar(
+                isLoading = isLoading,
+                onSend = { chatManager.sendMessage(it) }
+            )
         }
 
-        // Input
-        OverlayInputBar(
-            isLoading = isLoading,
-            onSend = { chatManager.sendMessage(it) }
-        )
+        // Resize handle at bottom-right corner
+        if (onResize != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(28.dp)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            onResize(dragAmount.x, dragAmount.y)
+                        }
+                    }
+                    .padding(4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                // Three diagonal lines as resize grip
+                Text(
+                    text = "⋮⋮",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                    modifier = Modifier.rotate(315f)
+                )
+            }
+        }
+    }
+        }
     }
 }
 

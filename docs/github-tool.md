@@ -10,6 +10,8 @@ It is implemented entirely inside the app (no `gh` CLI, no backend) in `app/src/
    - **`repo`** — required for private repos and for `write_file` / `delete_file`.
    - **`workflow`** — required for `rerun`.
    - **`notifications`** — required for `list_notifications`.
+   - **`read:org`** — required for `list_orgs`, `list_org_members`, `list_org_teams` (and to see private org membership).
+   - **`admin:org`** — required to `create_repo` inside an organization.
    - For public-only, read-only browsing, a fine-grained token with `contents:read` is enough.
 2. Open AndroClaw → **Settings → GitHub**, paste the token, and tap **Save**. The indicator should read `Saved (40 chars)` for a classic PAT.
 3. The token is stored in `EncryptedSharedPreferences` (AES-256-GCM) under the key `github_token`. It never leaves the device except in the `Authorization: Bearer …` header sent directly to `api.github.com`.
@@ -38,6 +40,7 @@ The model selects the action and parameters automatically.
 | `list_prs`           | `repo`                                           | `state` (open/closed/all), `limit`    | Lists PRs with number, title, author, state.                                           |
 | `view_pr`            | `repo`, `number`                                 | —                                     | Title, author, state, branches, additions/deletions, file count, URL, body.            |
 | `pr_checks`          | `repo`, `number`                                 | —                                     | Resolves the PR's head SHA and lists check-run statuses/conclusions for that commit.   |
+| `create_pr`          | `repo`, `title`, `head`                          | `base`, `body`, `draft` (bool)        | Opens a PR. `base` defaults to the repo's default branch (auto-detected). Use `head="user:branch"` for cross-fork PRs. |
 | `create_pr_comment`  | `repo`, `number`, `body`                         | —                                     | Posts a comment on the PR's conversation.                                              |
 | `merge_pr`           | `repo`, `number`                                 | `merge_method` (merge/squash/rebase)  | Defaults to `squash`.                                                                  |
 
@@ -61,30 +64,87 @@ The model selects the action and parameters automatically.
 
 ### Repos / user / search
 
-| Action               | Required params | Optional params              | Notes                                                                                 |
-| -------------------- | --------------- | ---------------------------- | ------------------------------------------------------------------------------------- |
-| `list_repos`         | —               | `user`, `limit`              | When `user` is omitted, lists the authenticated user's own repos sorted by `updated`. |
-| `list_notifications` | —               | —                            | Unread inbox: reason, repo, subject title, subject type. Up to 20.                    |
-| `search_repos`       | `query`         | `limit`                      | Uses GitHub search syntax: `org:foo language:kotlin stars:>100`.                      |
-| `search_issues`      | `query`         | `limit`                      | Same syntax; result rows tag each as `[Issue]` or `[PR]`.                             |
-| `get_user`           | —               | `username`                   | Authenticated user when `username` omitted. The only action that works without auth.  |
+| Action               | Required params | Optional params              | Notes                                                                                          |
+| -------------------- | --------------- | ---------------------------- | ---------------------------------------------------------------------------------------------- |
+| `list_repos`         | —               | `org`, `user`, `limit`       | `org` → `/orgs/{org}/repos`. `user` → `/users/{user}/repos`. Both omitted → your own repos.    |
+| `list_notifications` | —               | —                            | Unread inbox: reason, repo, subject title, subject type. Up to 20.                             |
+| `search_repos`       | `query`         | `limit`                      | Uses GitHub search syntax: `org:foo language:kotlin stars:>100`.                               |
+| `search_issues`      | `query`         | `limit`                      | Same syntax; result rows tag each as `[Issue]` or `[PR]`.                                      |
+| `get_user`           | —               | `username`                   | Authenticated user when `username` omitted. The only action that works without auth.           |
 
-### File contents
+### Organizations
 
-The Contents API commits straight to a branch — there's no PR step. If `branch` is omitted, the repo's default branch is used. For `write_file` and `delete_file`, `sha` is auto-fetched if not provided, so you can just pass `repo`, `path`, and `content`.
+All standard `owner/repo` actions (PRs, issues, CI, file edits) already work on organization repos — just pass `repo: "myorg/myrepo"`. The actions below are organization-scoped and don't fit the `owner/repo` shape. Org-introspection actions (`list_orgs`, `list_org_members`, `list_org_teams`) need the `read:org` PAT scope; `create_repo` inside an org needs `admin:org` (or a fine-grained token with the matching org permissions).
 
-| Action        | Required params                       | Optional params                     | Notes                                                                                       |
-| ------------- | ------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------- |
-| `read_file`   | `repo`, `path`                        | `branch`                            | Returns base64-decoded contents (truncated at ~6 KB) plus file SHA + size.                  |
-| `write_file`  | `repo`, `path`, `content`             | `branch`, `message`, `sha`          | Creates or updates a file. Auto-probes for the existing SHA when not supplied.              |
-| `delete_file` | `repo`, `path`                        | `branch`, `message`, `sha`          | Auto-fetches SHA when not supplied.                                                         |
-| `list_dir`    | `repo`                                | `path`, `branch`                    | Lists directory entries with type and size. If `path` resolves to a file, says so.          |
+| Action             | Required params | Optional params                                       | Notes                                                                                                                  |
+| ------------------ | --------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `list_orgs`        | —               | `username`                                            | Authenticated user's orgs by default; pass `username` for someone else's public orgs.                                  |
+| `view_org`         | `org`           | —                                                     | Org profile: name, description, location, blog, public repo and follower counts, URL.                                  |
+| `list_org_members` | `org`           | `limit`                                               | Lists visible members. Token needs `read:org` to see private members.                                                  |
+| `list_org_teams`   | `org`           | `limit`                                               | Lists teams (name, slug, description). Needs `read:org`.                                                               |
+| `list_org_issues`  | `org`           | `state` (open/closed/all), `limit`                    | Cross-repo issue feed for the org. Filters out PRs (the `/issues` endpoint includes them).                             |
+| `create_repo`      | `name`          | `org`, `description`, `private` (bool), `auto_init`   | Creates a repo. With `org` → `POST /orgs/{org}/repos`. Without → `POST /user/repos`. `auto_init` defaults to true.     |
+
+### File contents and branches
+
+The Contents API commits straight to a branch — there's no PR step from the file action itself. If `branch` is omitted, the repo's default branch is used. For `write_file` and `delete_file`, `sha` is auto-fetched if not provided, so you can just pass `repo`, `path`, and `content`. Pair these with `create_branch` + `create_pr` for the full fix-an-issue flow described below.
+
+| Action          | Required params                       | Optional params                     | Notes                                                                                                      |
+| --------------- | ------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `read_file`     | `repo`, `path`                        | `branch`                            | Returns base64-decoded contents (truncated at ~6 KB) plus file SHA + size.                                 |
+| `write_file`    | `repo`, `path`, `content`             | `branch`, `message`, `sha`          | Creates or updates a file. Auto-probes for the existing SHA when not supplied.                             |
+| `delete_file`   | `repo`, `path`                        | `branch`, `message`, `sha`          | Auto-fetches SHA when not supplied.                                                                        |
+| `list_dir`      | `repo`                                | `path`, `branch`                    | Lists directory entries with type and size. If `path` resolves to a file, says so.                         |
+| `create_branch` | `repo`, `branch`                      | `from_branch`                       | Creates a new branch. `branch` is the new name; `from_branch` defaults to the repo's default branch.       |
 
 ### Raw API escape hatch
 
 | Action | Required params | Optional params         | Notes                                                                                              |
 | ------ | --------------- | ----------------------- | -------------------------------------------------------------------------------------------------- |
 | `api`  | `path`          | `method`, `body`        | Direct REST call to any GitHub endpoint. `path` starts with `/` (e.g. `/repos/owner/repo/topics`). |
+
+## Recipe: fix an issue and raise a PR
+
+The full fix-an-issue flow is now first-class. You just say something like:
+
+> "fix issue #42 in pranavpatil/AndroClaw and open a PR"
+
+…and the agent will chain these calls (the exact files it edits depend on the issue):
+
+```jsonc
+// 1. Read the issue
+{ "action": "view_issue", "repo": "pranavpatil/AndroClaw", "number": 42 }
+
+// 2. Gather context — list relevant files, read the ones that look related
+{ "action": "list_dir",  "repo": "pranavpatil/AndroClaw", "path": "app/src/main/java/com/androclaw/tools" }
+{ "action": "read_file", "repo": "pranavpatil/AndroClaw", "path": "app/src/main/java/com/androclaw/tools/AutoScrollToolHandler.kt" }
+
+// 3. Create a feature branch (defaults to forking from the repo's default branch)
+{ "action": "create_branch", "repo": "pranavpatil/AndroClaw", "branch": "fix/issue-42-reels-skip" }
+
+// 4. Commit the edit on the new branch
+{
+  "action":  "write_file",
+  "repo":    "pranavpatil/AndroClaw",
+  "path":    "app/src/main/java/com/androclaw/tools/AutoScrollToolHandler.kt",
+  "branch":  "fix/issue-42-reels-skip",
+  "message": "fix: don't skip first reel on auto-scroll start",
+  "content": "/* …updated file contents… */"
+}
+
+// 5. Open the PR — base auto-detects the repo's default branch
+{
+  "action": "create_pr",
+  "repo":   "pranavpatil/AndroClaw",
+  "title":  "fix: don't skip first reel on auto-scroll start",
+  "head":   "fix/issue-42-reels-skip",
+  "body":   "Fixes #42.\n\nThe initial swipe was firing before the feed had a focused item, so the first reel was being skipped. Wait until `onWindowStateChanged` reports a non-empty window before kicking off the swipe loop."
+}
+```
+
+The agent never edits straight on `main` for this flow — every fix goes through a feature branch + PR so you can review the diff before merging. You can also pass `draft: true` to `create_pr` if you want it to land as a draft.
+
+> **Reality check.** This makes the *plumbing* mistake-proof: branch creation, base-branch detection, SHA fetching, and PR opening all happen without the model having to hand-craft REST payloads. It does **not** guarantee the *fix itself* is correct — that part is on the model and the underlying file context. Always review the PR diff before merging.
 
 ## Examples
 
@@ -142,6 +202,57 @@ The handler probes the existing file to fetch its SHA, then PUTs the update with
   "repo": "openclaw/openclaw",
   "run_id": 9876543210,
   "failed_only": true
+}
+```
+
+**List repos in an organization**
+
+```json
+{
+  "action": "list_repos",
+  "org": "openclaw",
+  "limit": 20
+}
+```
+
+**View an organization's profile**
+
+```json
+{ "action": "view_org", "org": "openclaw" }
+```
+
+**Cross-repo issue feed for an org** (great for triage)
+
+```json
+{ "action": "list_org_issues", "org": "openclaw", "state": "open", "limit": 30 }
+```
+
+**Create a private repo inside an organization**
+
+```json
+{
+  "action": "create_repo",
+  "org": "openclaw",
+  "name": "experiments-2026",
+  "description": "Throwaway prototypes for the 2026 roadmap",
+  "private": true
+}
+```
+
+**Create a personal repo** (no `org` → goes under your account)
+
+```json
+{ "action": "create_repo", "name": "androclaw-notes", "private": false }
+```
+
+**Edit a file in an org repo** — there's nothing org-specific here. Org owner just goes in the `repo` parameter:
+
+```json
+{
+  "action": "write_file",
+  "repo": "openclaw/openclaw",
+  "path": "docs/note.md",
+  "content": "# Note\nAdded from AndroClaw."
 }
 ```
 

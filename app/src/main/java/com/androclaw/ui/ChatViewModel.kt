@@ -126,7 +126,8 @@ class ChatViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
                             error = event.message,
-                            currentToolStatus = null
+                            currentToolStatus = null,
+                            streamingText = null
                         )
                     }
                     is AgentEvent.StreamingText -> {
@@ -150,7 +151,6 @@ class ChatViewModel @Inject constructor(
                             currentToolStatus = event.message
                         )
                     }
-                    null -> {}
                 }
             }
         }
@@ -259,7 +259,11 @@ class ChatViewModel @Inject constructor(
             )
             conversationDao.touchConversation(convId)
 
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+            _uiState.value = _uiState.value.copy(
+                isLoading = true,
+                error = null,
+                streamingText = null
+            )
 
             // Rebuild conversation history from DB if empty (e.g. after switching conversations)
             if (conversationHistory.isEmpty()) {

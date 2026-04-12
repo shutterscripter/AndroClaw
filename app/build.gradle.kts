@@ -102,6 +102,9 @@ dependencies {
     // Security
     implementation(libs.security.crypto)
 
+    // On-device OCR for the screen-observation pipeline (Set-of-Mark fallback)
+    implementation(libs.mlkit.text.recognition)
+
     // Test (JVM unit tests)
     testImplementation(libs.junit)
     testImplementation(libs.mockito.core)
