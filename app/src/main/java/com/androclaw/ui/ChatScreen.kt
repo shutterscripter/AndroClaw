@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -73,10 +74,13 @@ fun ChatScreen(
     // ChatViewModel.init handles restoring the shared active conversation
     // (synced with the floating overlay) or creating a fresh one if none exist.
 
-    // Auto-scroll to bottom
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+    // Auto-scroll to bottom — re-keyed on streaming text length so the view
+    // follows the typewriter effect as new tokens arrive.
+    LaunchedEffect(messages.size, uiState.streamingText?.length ?: 0) {
+        val streamingActive = !uiState.streamingText.isNullOrEmpty()
+        val total = messages.size + (if (streamingActive) 1 else 0)
+        if (total > 0) {
+            listState.animateScrollToItem(total - 1)
         }
     }
 
@@ -164,7 +168,19 @@ fun ChatScreen(
                         MessageBubble(message = message)
                     }
 
-                    if (uiState.isLoading) {
+                    // Live streaming bubble — rendered while the assistant is
+                    // mid-response, before the final message is committed to
+                    // the DB. This is what gives the typewriter / token-by-token
+                    // UX. Cleared by AgentEvent.FinalResponse, after which the
+                    // permanent DB-backed bubble takes over.
+                    val streaming = uiState.streamingText
+                    if (!streaming.isNullOrEmpty()) {
+                        item(key = "streaming-bubble") {
+                            StreamingAssistantBubble(text = streaming)
+                        }
+                    }
+
+                    if (uiState.isLoading && uiState.streamingText.isNullOrEmpty()) {
                         item {
                             ThinkingIndicator(uiState.currentToolStatus)
                         }
@@ -318,6 +334,39 @@ private fun ThinkingIndicator(toolStatus: String?) {
                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
                 )
             }
+        }
+    }
+}
+
+/**
+ * Transient assistant bubble shown while a response is being streamed token-by-token.
+ * Shape and styling intentionally mirror the permanent AssistantBubble in MessageBubble.kt
+ * so the visual handoff (streaming → committed DB-backed bubble) is seamless.
+ */
+@Composable
+private fun StreamingAssistantBubble(text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 60.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        AppIcon(size = 32.dp)
+
+        Spacer(modifier = Modifier.width(8.dp))
+
+        Box(
+            modifier = Modifier
+                .widthIn(max = 300.dp)
+                .clip(RoundedCornerShape(6.dp, 20.dp, 20.dp, 20.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Text(
+                text = text.replace("**", ""),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
     }
 }

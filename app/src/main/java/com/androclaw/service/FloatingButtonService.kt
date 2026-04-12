@@ -6,10 +6,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.PixelFormat
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.compose.runtime.mutableStateOf
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -61,6 +64,9 @@ class FloatingButtonService : Service(), LifecycleOwner, SavedStateRegistryOwner
     private var chatOverlayView: View? = null
     private var chatManager: OverlayChatManager? = null
     private var isChatOpen = false
+    private val overlayVisible = mutableStateOf(false)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var pendingRemoval: Runnable? = null
 
     private var initialX = 0
     private var initialY = 0
@@ -192,8 +198,14 @@ class FloatingButtonService : Service(), LifecycleOwner, SavedStateRegistryOwner
         }
     }
 
+    private var chatParams: WindowManager.LayoutParams? = null
+
     private fun openChatOverlay() {
         if (isChatOpen) return
+
+        // Cancel any pending removal from a previous close animation
+        pendingRemoval?.let { mainHandler.removeCallbacks(it) }
+        pendingRemoval = null
 
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
 
@@ -205,10 +217,16 @@ class FloatingButtonService : Service(), LifecycleOwner, SavedStateRegistryOwner
         chatManager!!.ensureConversation()
 
         val dm = resources.displayMetrics
-        val chatWidth = (dm.widthPixels * 0.92f).toInt()
-        val chatHeight = (dm.heightPixels * 0.65f).toInt()
+        val chatWidth = prefs.getInt(PREF_CHAT_WIDTH, (dm.widthPixels * 0.92f).toInt())
+        val chatHeight = prefs.getInt(PREF_CHAT_HEIGHT, (dm.heightPixels * 0.65f).toInt())
 
-        val chatParams = WindowManager.LayoutParams(
+        // Position: restore saved or center on screen
+        val defaultX = (dm.widthPixels - chatWidth) / 2
+        val defaultY = (dm.heightPixels - chatHeight) / 2
+        val chatX = prefs.getInt(PREF_CHAT_X, defaultX)
+        val chatY = prefs.getInt(PREF_CHAT_Y, defaultY)
+
+        val params = WindowManager.LayoutParams(
             chatWidth,
             chatHeight,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -216,10 +234,14 @@ class FloatingButtonService : Service(), LifecycleOwner, SavedStateRegistryOwner
                     WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.CENTER
+            gravity = Gravity.TOP or Gravity.START
+            x = chatX
+            y = chatY
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
+        chatParams = params
 
+        overlayVisible.value = false
         val composeView = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@FloatingButtonService)
             setViewTreeSavedStateRegistryOwner(this@FloatingButtonService)
@@ -228,33 +250,91 @@ class FloatingButtonService : Service(), LifecycleOwner, SavedStateRegistryOwner
                 AndroClawTheme {
                     OverlayChatUI(
                         chatManager = chatManager!!,
-                        onClose = { closeChatOverlay() }
+                        visible = overlayVisible.value,
+                        onClose = { closeChatOverlay() },
+                        onResize = { deltaX, deltaY -> resizeChatOverlay(deltaX, deltaY) },
+                        onMove = { deltaX, deltaY -> moveChatOverlay(deltaX, deltaY) }
                     )
                 }
             }
         }
 
         chatOverlayView = composeView
-        windowManager.addView(composeView, chatParams)
+        windowManager.addView(composeView, params)
         isChatOpen = true
 
         // Hide the floating button while chat is open
         floatingView.visibility = View.GONE
+
+        // Trigger the enter animation after the view is attached
+        mainHandler.post { overlayVisible.value = true }
+    }
+
+    private fun resizeChatOverlay(deltaX: Float, deltaY: Float) {
+        val params = chatParams ?: return
+        val view = chatOverlayView ?: return
+        val dm = resources.displayMetrics
+
+        val minWidth = (dm.widthPixels * 0.4f).toInt()
+        val minHeight = (dm.heightPixels * 0.3f).toInt()
+        val maxWidth = dm.widthPixels
+        val maxHeight = (dm.heightPixels * 0.95f).toInt()
+
+        params.width = (params.width + deltaX.toInt()).coerceIn(minWidth, maxWidth)
+        params.height = (params.height + deltaY.toInt()).coerceIn(minHeight, maxHeight)
+
+        try {
+            windowManager.updateViewLayout(view, params)
+        } catch (_: Exception) {}
+
+        // Persist the size
+        prefs.edit()
+            .putInt(PREF_CHAT_WIDTH, params.width)
+            .putInt(PREF_CHAT_HEIGHT, params.height)
+            .apply()
+    }
+
+    private fun moveChatOverlay(deltaX: Float, deltaY: Float) {
+        val params = chatParams ?: return
+        val view = chatOverlayView ?: return
+
+        params.x += deltaX.toInt()
+        params.y += deltaY.toInt()
+
+        try {
+            windowManager.updateViewLayout(view, params)
+        } catch (_: Exception) {}
+
+        // Persist the position
+        prefs.edit()
+            .putInt(PREF_CHAT_X, params.x)
+            .putInt(PREF_CHAT_Y, params.y)
+            .apply()
     }
 
     private fun closeChatOverlay() {
         if (!isChatOpen) return
 
-        chatOverlayView?.let {
-            try { windowManager.removeView(it) } catch (_: Exception) {}
-        }
-        chatOverlayView = null
+        // Trigger exit animation
+        overlayVisible.value = false
         isChatOpen = false
 
-        // Show the floating button again
+        // Show the floating button again right away
         floatingView.visibility = View.VISIBLE
 
-        lifecycleRegistry.currentState = Lifecycle.State.STARTED
+        // Remove the window after the exit animation completes
+        pendingRemoval?.let { mainHandler.removeCallbacks(it) }
+        val viewToRemove = chatOverlayView
+        chatOverlayView = null
+        val removal = Runnable {
+            viewToRemove?.let {
+                try { windowManager.removeView(it) } catch (_: Exception) {}
+            }
+            pendingRemoval = null
+            lifecycleRegistry.currentState = Lifecycle.State.STARTED
+        }
+        pendingRemoval = removal
+        mainHandler.postDelayed(removal, EXIT_ANIM_DURATION_MS)
     }
 
     private fun openFullApp() {
@@ -279,7 +359,13 @@ class FloatingButtonService : Service(), LifecycleOwner, SavedStateRegistryOwner
     }
 
     override fun onDestroy() {
-        closeChatOverlay()
+        pendingRemoval?.let { mainHandler.removeCallbacks(it) }
+        pendingRemoval = null
+        chatOverlayView?.let {
+            try { windowManager.removeView(it) } catch (_: Exception) {}
+        }
+        chatOverlayView = null
+        isChatOpen = false
         try { windowManager.removeView(floatingView) } catch (_: Exception) {}
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         store.clear()
@@ -291,6 +377,11 @@ class FloatingButtonService : Service(), LifecycleOwner, SavedStateRegistryOwner
         const val BUTTON_SIZE = 160
         const val MOVE_THRESHOLD = 10
         const val LONG_PRESS_DURATION = 500L
+        const val EXIT_ANIM_DURATION_MS = 240L
+        private const val PREF_CHAT_WIDTH = "overlay_chat_width"
+        private const val PREF_CHAT_HEIGHT = "overlay_chat_height"
+        private const val PREF_CHAT_X = "overlay_chat_x"
+        private const val PREF_CHAT_Y = "overlay_chat_y"
 
         fun start(context: Context) {
             val intent = Intent(context, FloatingButtonService::class.java)

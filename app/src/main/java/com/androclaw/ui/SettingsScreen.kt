@@ -29,7 +29,6 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.SmartToy
-import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -74,7 +73,9 @@ import com.androclaw.utils.Constants
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onRequestScreenCapture: () -> Unit = {},
+    onStopScreenCapture: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var showClearDialog by remember { mutableStateOf(false) }
@@ -219,6 +220,51 @@ fun SettingsScreen(
                 )
             }
 
+            // ── Exa Web Search ──
+            SettingsSection(title = "Exa Web Search", icon = Icons.Outlined.Key) {
+                var exaKey by remember { mutableStateOf(viewModel.getExaApiKey()) }
+                var showExaKey by remember { mutableStateOf(false) }
+
+                Text(
+                    text = "API key for Exa neural web search (https://exa.ai). When set, web_search uses Exa instead of DuckDuckGo/Google scraping for higher-quality results. Auto-saved as you type.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = exaKey,
+                    onValueChange = {
+                        exaKey = it
+                        viewModel.setExaApiKey(it)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("exa_...") },
+                    visualTransformation = if (showExaKey) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showExaKey = !showExaKey }) {
+                            Icon(
+                                imageVector = if (showExaKey) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                contentDescription = "Toggle visibility",
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Accent,
+                        cursorColor = Accent
+                    )
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = if (exaKey.isNotBlank()) "✓ Active — ${exaKey.length} chars saved. web_search will use Exa." else "Not set — web_search falls back to DuckDuckGo/Google.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (exaKey.isNotBlank()) Accent else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
             // ── GitHub Token ──
             SettingsSection(title = "GitHub", icon = Icons.Outlined.Key) {
                 // Don't mask by default — the field is already only visible inside Settings,
@@ -338,14 +384,30 @@ fun SettingsScreen(
                 }
             }
 
-            // ── Streaming ──
-            SettingsSection(title = "Streaming", icon = Icons.Outlined.Speed) {
-                SettingsToggleRow(
-                    title = "Stream responses",
-                    subtitle = "Show tokens as they arrive (real-time output)",
-                    checked = viewModel.isStreamingEnabled(),
-                    onCheckedChange = { viewModel.setStreamingEnabled(it) }
+            // ── Screen capture (MediaProjection) ──
+            SettingsSection(title = "Screen capture", icon = Icons.Outlined.SmartToy) {
+                val capturing = viewModel.isScreenCaptureRunning()
+                Text(
+                    text = if (capturing) {
+                        "Screen capture is ON. AndroClaw can read the screen instantly via MediaProjection — faster and more reliable than the accessibility-based fallback. A persistent notification stays in your status bar while it's running."
+                    } else {
+                        "Off. Turn this on to let AndroClaw read the screen via MediaProjection (preferred — faster, no rate limit, works on Android 10). The system will ask permission once. A persistent notification will stay in your status bar while it's running."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(modifier = Modifier.height(12.dp))
+                if (capturing) {
+                    TextButton(
+                        onClick = onStopScreenCapture,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Stop screen capture") }
+                } else {
+                    TextButton(
+                        onClick = onRequestScreenCapture,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Enable screen capture") }
+                }
             }
 
             // ── Persona ──

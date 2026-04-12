@@ -9,9 +9,10 @@ import com.androclaw.api.provider.ProviderRegistry
 import com.androclaw.api.provider.StreamChunk
 import com.androclaw.tools.ToolExecutor
 import com.androclaw.utils.Constants
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Named
@@ -38,8 +39,16 @@ class ClaudeRepository @Inject constructor(
     @Named("encrypted") private val encryptedPrefs: SharedPreferences,
     @Named("regular") private val prefs: SharedPreferences
 ) {
-    private val _agentEvents = MutableStateFlow<AgentEvent?>(null)
-    val agentEvents: StateFlow<AgentEvent?> = _agentEvents
+    // Use SharedFlow (not StateFlow) so streaming token deltas are NOT conflated.
+    // StateFlow drops intermediate values when emissions arrive faster than the
+    // collector — that breaks token-by-token streaming UX. SUSPEND backpressure
+    // pauses the producer if the UI ever falls behind, so no deltas are lost.
+    private val _agentEvents = MutableSharedFlow<AgentEvent>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.SUSPEND
+    )
+    val agentEvents: SharedFlow<AgentEvent> = _agentEvents
 
     private fun getApiKey(): String? {
         val providerId = getProvider()
@@ -56,9 +65,6 @@ class ClaudeRepository @Inject constructor(
         val saved = prefs.getString(Constants.PREF_MODEL, Constants.DEFAULT_MODEL) ?: Constants.DEFAULT_MODEL
         return saved
     }
-
-    private fun isStreamingEnabled(): Boolean =
-        prefs.getBoolean(Constants.PREF_STREAMING_ENABLED, true)
 
     private fun getEnabledTools(): Set<String> =
         prefs.getStringSet(Constants.PREF_ENABLED_TOOLS, Constants.ALL_TOOL_NAMES.toSet())
@@ -92,7 +98,10 @@ class ClaudeRepository @Inject constructor(
         val systemPrompt = buildSystemPrompt()
         val model = getModel()
         val providerId = getProvider()
-        val streaming = isStreamingEnabled() && provider.supportsStreaming
+        // Streaming is always on when the provider supports it — there is no
+        // user toggle. Providers that don't support SSE fall through to the
+        // non-streaming path automatically.
+        val streaming = provider.supportsStreaming
 
         // Prune verbose tool results from older messages
         contextManager.pruneOldToolResults(conversationHistory)
@@ -101,7 +110,7 @@ class ClaudeRepository @Inject constructor(
         if (contextManager.needsCompaction(systemPrompt, conversationHistory, providerId, model)) {
             val plan = contextManager.prepareCompaction(conversationHistory)
             if (plan != null) {
-                _agentEvents.value = AgentEvent.Compacting("Summarizing older messages to free up context...")
+                _agentEvents.emit(AgentEvent.Compacting("Summarizing older messages to free up context..."))
                 try {
                     val summaryResponse = if (streaming) {
                         sendStreaming(provider, apiKey, model, "You are a helpful assistant that summarizes conversations.",
@@ -126,7 +135,7 @@ class ClaudeRepository @Inject constructor(
 
         // Emit context usage info
         val usageInfo = contextManager.getUsageInfo(systemPrompt, conversationHistory, providerId, model)
-        _agentEvents.value = AgentEvent.ContextUpdate(usageInfo)
+        _agentEvents.emit(AgentEvent.ContextUpdate(usageInfo))
 
         while (attempts < maxLoopIterations) {
 
@@ -164,7 +173,7 @@ class ClaudeRepository @Inject constructor(
                     .joinToString("\n") { it.text ?: "" }
                     .trim()
 
-                _agentEvents.value = AgentEvent.FinalResponse(finalText)
+                _agentEvents.emit(AgentEvent.FinalResponse(finalText))
                 return Result.success(finalText)
             }
 
@@ -177,7 +186,7 @@ class ClaudeRepository @Inject constructor(
                 val toolInput = block.input ?: emptyMap()
 
                 val description = describeToolCall(toolName, toolInput)
-                _agentEvents.value = AgentEvent.ToolExecuting(ToolStatus(toolName, description))
+                _agentEvents.emit(AgentEvent.ToolExecuting(ToolStatus(toolName, description)))
 
                 val result = try {
                     toolExecutor.execute(toolName, toolInput)
@@ -185,7 +194,7 @@ class ClaudeRepository @Inject constructor(
                     "Error executing $toolName: ${e.message}"
                 }
 
-                _agentEvents.value = AgentEvent.ToolCompleted(ToolStatus(toolName, description, isComplete = true))
+                _agentEvents.emit(AgentEvent.ToolCompleted(ToolStatus(toolName, description, isComplete = true)))
                 toolResults.add(buildToolResultBlock(toolId, result))
             }
 
@@ -220,7 +229,7 @@ class ClaudeRepository @Inject constructor(
                 when (chunk) {
                     is StreamChunk.TextDelta -> {
                         textBuilder.append(chunk.text)
-                        _agentEvents.value = AgentEvent.StreamingText(chunk.text)
+                        _agentEvents.emit(AgentEvent.StreamingText(chunk.text))
                     }
                     is StreamChunk.ToolUseStart -> {
                         // Flush any accumulated text
@@ -291,7 +300,7 @@ class ClaudeRepository @Inject constructor(
                         if (msg.contains("429") || msg.contains("500") || msg.contains("502") || msg.contains("503")) {
                             delay(1000L * (attempt + 1))
                         } else {
-                            _agentEvents.value = AgentEvent.Error(msg)
+                            _agentEvents.emit(AgentEvent.Error(msg))
                             return null
                         }
                     }
@@ -301,7 +310,7 @@ class ClaudeRepository @Inject constructor(
                 delay(1000L * (attempt + 1))
             }
         }
-        _agentEvents.value = AgentEvent.Error(lastError?.message ?: "Unknown error")
+        _agentEvents.emit(AgentEvent.Error(lastError?.message ?: "Unknown error"))
         return null
     }
 
@@ -317,7 +326,18 @@ class ClaudeRepository @Inject constructor(
             val closeBracket = result.indexOf(']')
             if (closeBracket > imagePrefix.length) {
                 val mediaType = result.substring(imagePrefix.length, closeBracket)
-                val base64Data = result.substring(closeBracket + 1)
+                // Optional ||LEGEND|| separator: anything after it is rendered
+                // as a sibling text block alongside the image, used by
+                // screen_observe to ship the marked-up screenshot AND its
+                // numbered element legend in a single tool_result.
+                val rest = result.substring(closeBracket + 1)
+                val legendSep = "||LEGEND||"
+                val (base64Data, legendText) = if (rest.contains(legendSep)) {
+                    val idx = rest.indexOf(legendSep)
+                    rest.substring(0, idx) to rest.substring(idx + legendSep.length)
+                } else {
+                    rest to "Screenshot captured. Analyze what you see on the screen."
+                }
 
                 val contentBlocks = listOf(
                     mapOf(
@@ -330,7 +350,7 @@ class ClaudeRepository @Inject constructor(
                     ),
                     mapOf(
                         "type" to "text",
-                        "text" to "Screenshot captured. Analyze what you see on the screen."
+                        "text" to legendText
                     )
                 )
 
@@ -406,6 +426,19 @@ class ClaudeRepository @Inject constructor(
                 }
             }
             "control_app_ui" -> "Controlling ${input["app_package"]}..."
+            "screen_observe" -> {
+                val pkg = input["app_package"]?.toString()
+                if (pkg.isNullOrBlank()) "Observing screen..." else "Observing $pkg..."
+            }
+            "navigate_guide" -> {
+                val act = input["action"]?.toString()
+                if (act == "dismiss" || act == "hide") "Clearing highlight..."
+                else "Highlighting \"${input["hint"] ?: "next step"}\"..."
+            }
+            "think" -> {
+                val thought = input["thought"]?.toString()?.lineSequence()?.firstOrNull()?.take(80)
+                if (thought.isNullOrBlank()) "Thinking..." else "Thinking: $thought"
+            }
             "web_search" -> "Searching: ${input["query"]}..."
             "web_fetch" -> "Reading ${input["url"]}..."
             "memory" -> "Memory: ${input["action"]} ${input["key"] ?: input["query"] ?: ""}..."

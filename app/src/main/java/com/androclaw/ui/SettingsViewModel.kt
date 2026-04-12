@@ -8,6 +8,7 @@ import com.androclaw.api.provider.ModelInfo
 import com.androclaw.api.provider.ProviderRegistry
 import com.androclaw.db.ConversationDao
 import com.androclaw.db.MessageDao
+import com.androclaw.service.ScreenCaptureManager
 import com.androclaw.utils.Constants
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
@@ -21,8 +22,11 @@ class SettingsViewModel @Inject constructor(
     private val messageDao: MessageDao,
     private val conversationDao: ConversationDao,
     val providerRegistry: ProviderRegistry,
-    val systemPromptManager: SystemPromptManager
+    val systemPromptManager: SystemPromptManager,
+    private val screenCaptureManager: ScreenCaptureManager
 ) : ViewModel() {
+
+    fun isScreenCaptureRunning(): Boolean = screenCaptureManager.isRunning()
 
     // ── Provider ──
 
@@ -57,6 +61,15 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    // ── Exa API Key (web search provider) ──
+
+    fun getExaApiKey(): String =
+        (encryptedPrefs.getString(Constants.PREF_EXA_API_KEY, "") ?: "").trim()
+
+    fun setExaApiKey(key: String) {
+        encryptedPrefs.edit().putString(Constants.PREF_EXA_API_KEY, key.trim()).apply()
+    }
+
     // ── GitHub Token ──
 
     fun getGitHubToken(): String =
@@ -81,15 +94,6 @@ class SettingsViewModel @Inject constructor(
     fun getModelsForCurrentProvider(): List<ModelInfo> {
         val providerId = getProvider()
         return providerRegistry.getProvider(providerId)?.supportedModels ?: emptyList()
-    }
-
-    // ── Streaming ──
-
-    fun isStreamingEnabled(): Boolean =
-        prefs.getBoolean(Constants.PREF_STREAMING_ENABLED, true)
-
-    fun setStreamingEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean(Constants.PREF_STREAMING_ENABLED, enabled).apply()
     }
 
     // ── Tools ──

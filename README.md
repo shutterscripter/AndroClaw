@@ -99,7 +99,7 @@ For a deeper, file-by-file map, see [`CLAUDE.md`](CLAUDE.md).
 | **Web**           | `web_search`, `web_fetch`, `browse_web`                                                                        |
 | **Files**         | `file_manager` (find / open / share / list / info / recent / read / tree / grep / glob)                        |
 | **Memory & Notes**| `memory` (save / recall / search), `notes` (create / read / update / delete / list / search)                   |
-| **Apps**          | `open_app`, `list_apps`, `control_app_ui`                                                                      |
+| **Apps**          | `open_app`, `list_apps`, `screen_observe` (Set-of-Mark perception, MediaProjection-preferred), `control_app_ui` (with `tap_mark`/`tap_at`/`swipe`) |
 | **Media**         | `media_control`, `take_screenshot` (with vision analysis), `text_to_speech`                                    |
 | **Device**        | `device_info`, `toggle_setting`, `brightness_control`, `get_location`                                          |
 | **Productivity**  | `create_calendar_event`, `set_reminder`, `set_alarm`, `clipboard`, `notifications` (read & act)                |
@@ -123,22 +123,32 @@ Create them in-app under **Skills**, or via the `skills` tool from chat.
 
 The `github` tool gives AndroClaw direct access to the GitHub REST API from your phone — no `gh` CLI, no backend, just a Personal Access Token stored in `EncryptedSharedPreferences` and HTTPS calls straight to `api.github.com`. All HTTP work runs on `Dispatchers.IO`, so the main thread is never blocked.
 
-**Setup:** create a [PAT](https://github.com/settings/tokens) with the scopes you need (`repo` for private repos and file writes, `workflow` for re-running CI, `notifications` for the inbox), then paste it under **Settings → GitHub** and tap **Save**. The indicator should read `Saved (40 chars)`.
+**Setup:** create a [PAT](https://github.com/settings/tokens) with the scopes you need (`repo` for private repos and file writes, `workflow` for re-running CI, `notifications` for the inbox, `read:org` for org introspection, `admin:org` to create repos inside an organization), then paste it under **Settings → GitHub** and tap **Save**. The indicator should read `Saved (40 chars)`.
 
 **What you can do from chat:**
 
-- **Pull requests** — `list_prs`, `view_pr`, `pr_checks`, `create_pr_comment`, `merge_pr` (squash / merge / rebase)
+- **Pull requests** — `list_prs`, `view_pr`, `pr_checks`, `create_pr` (auto-detects the base branch), `create_pr_comment`, `merge_pr` (squash / merge / rebase)
 - **Issues** — `list_issues`, `view_issue`, `create_issue`, `comment_issue`, `close_issue`
 - **GitHub Actions / CI** — `list_runs`, `view_run`, `rerun` (with optional `failed_only`)
-- **Repos / user / search** — `list_repos`, `list_notifications`, `search_repos`, `search_issues`, `get_user`
-- **File contents** — `read_file`, `write_file`, `delete_file`, `list_dir`. Edits commit straight to a branch via the Contents API; `sha` is auto-fetched on writes, so you can pass just `repo` + `path` + `content`. If `branch` is omitted, the repo's default branch is used.
+- **Repos / user / search** — `list_repos` (your account, a user, or an org), `list_notifications`, `search_repos`, `search_issues`, `get_user`
+- **Organizations** — `list_orgs` (yours or someone else's), `view_org`, `list_org_members`, `list_org_teams`, `list_org_issues` (cross-repo triage feed), `create_repo` (inside an org or your own account)
+- **File contents and branches** — `read_file`, `write_file`, `delete_file`, `list_dir`, `create_branch`. Edits commit straight to a branch via the Contents API; `sha` is auto-fetched on writes, so you can pass just `repo` + `path` + `content`. If `branch` is omitted, the repo's default branch is used. Works on both personal and organization repos — just pass `repo: "owner/name"` where `owner` can be a user or an org.
 - **Raw escape hatch** — `api` for any GitHub REST endpoint with a custom `method` and `body`.
+
+**Fix-an-issue flow (end-to-end).** Because `view_issue`, `read_file`, `create_branch`, `write_file`, and `create_pr` are all first-class, you can ask AndroClaw to triage and patch a bug entirely from chat:
+
+> "fix issue #42 in pranavpatil/AndroClaw and open a PR"
+
+The agent will read the issue, pull the relevant files, create a `fix/issue-42-...` branch, commit edits onto it, and open a PR back to the default branch — never touching `main` directly. You still review the PR diff before merging; the tool guarantees the *plumbing* is correct, not that the *fix* is. See [`docs/github-tool.md`](docs/github-tool.md) for the full recipe.
 
 You normally don't call this tool by hand — you ask AndroClaw in plain English:
 
 > "show me my open PRs in pranavpatil/AndroClaw"
 > "merge PR #42 with squash and post a thanks comment"
 > "create an issue titled 'Reels auto-scroll skips first item' in pranavpatil/AndroClaw"
+> "list all open issues across the openclaw org"
+> "create a private repo called experiments-2026 inside the openclaw org"
+> "show me the members of the openclaw org"
 > "read the README from openclaw/openclaw and summarize it"
 > "rerun the failed jobs of run 9876543210"
 

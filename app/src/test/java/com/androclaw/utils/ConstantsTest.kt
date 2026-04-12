@@ -34,6 +34,8 @@ class ConstantsTest {
         )
         // GitHub tool
         assertThat(names).contains("github")
+        // Set-of-Mark perception tool
+        assertThat(names).contains("screen_observe")
     }
 
     @Test

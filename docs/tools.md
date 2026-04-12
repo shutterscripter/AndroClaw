@@ -1,6 +1,6 @@
 # Tools Reference
 
-AndroClaw has 34 built-in tools organized by category. The AI agent selects and chains tools automatically based on your requests.
+AndroClaw has 35 built-in tools organized by category. The AI agent selects and chains tools automatically based on your requests.
 
 ## Communication
 
@@ -65,13 +65,24 @@ Open installed apps with fuzzy matching.
 List all installed apps.
 - **Parameters:** `filter` (optional name filter)
 
+### screen_observe
+Set-of-Mark perception. Captures the current screen, walks the accessibility tree (with on-device ML Kit OCR fallback when the tree is sparse — Compose / React Native / Flutter / custom-canvas apps), draws numbered colored boxes around every interactive element, and returns the marked-up screenshot **plus** a text legend mapping each mark id to its role / label / pixel center / bounds. This is the perception half of the UI-control loop — call it before `control_app_ui` whenever you're operating on a third-party app whose accessibility tree is unreliable.
+- **Parameters:** `app_package` (optional — launches the app first; omit to observe whatever's already foreground)
+- **Output:** `[image + text legend]` — the model picks a mark number from the legend
+- **Capture sources (preferred order):**
+  1. **MediaProjection** — opt in via Settings → Screen capture. Faster, no rate limit, works on Android 10+, doesn't require the accessibility service for screen reading. Requires a one-time system consent dialog and shows a persistent foreground-service notification while running.
+  2. **AccessibilityService.takeScreenshot** — automatic fallback. Requires the accessibility service AND Android 11+, and Android throttles it to ~1 capture/second.
+
 ### control_app_ui
-Accessibility-based UI automation.
-- **Parameters:** `app_package` (required), `actions` (required array)
+Accessibility-based UI automation. The reliable way to use it on third-party apps is to call `screen_observe` first, then come back here with `tap_mark`.
+- **Parameters:** `app_package` (required, can be blank), `actions` (required array)
 - **Action types:**
-  - `tap` — by text (`text:ButtonLabel`) or ID (`id:com.app:id/button`)
+  - `tap_mark` — `{type:"tap_mark", mark:N}` — tap the element marked N by the most recent `screen_observe` (most reliable for Compose / RN / custom UIs)
+  - `tap_at` — `{type:"tap_at", x:N, y:N}` — raw pixel tap
+  - `swipe` — `{type:"swipe", direction:"up|down|left|right", duration_ms:250}` — full-screen swipe (good for reels/feeds)
+  - `tap` — legacy: by text (`text:ButtonLabel`) or ID (`id:com.app:id/button`); fragile on third-party apps
   - `type` — enter text into focused field
-  - `scroll` — up or down
+  - `scroll` — up or down (uses the first scrollable container in the a11y tree)
   - `wait` — delay in milliseconds
   - `back` / `home` — navigation
 
@@ -229,10 +240,10 @@ App usage statistics.
 ## Integrations
 
 ### github
-GitHub REST API: PRs, issues, CI runs, repos, notifications, search, and direct file editing committed straight to a branch via the Contents API.
-- **Actions:** list_prs, view_pr, pr_checks, create_pr_comment, merge_pr, list_issues, view_issue, create_issue, comment_issue, close_issue, list_runs, view_run, rerun, list_repos, list_notifications, search_repos, search_issues, get_user, read_file, write_file, delete_file, list_dir, api
-- **Parameters:** `repo` (owner/repo), `number`, `state`, `limit`, `title`, `body`, `merge_method`, `run_id`, `failed_only`, `query`, `path`, `content`, `branch`, `sha`, `message`, `method`
-- Requires a GitHub Personal Access Token (Settings → GitHub). Stored in `EncryptedSharedPreferences`.
+GitHub REST API: PRs (incl. opening new ones with auto-detected base branch), issues, CI runs, repos (personal **and** organization), organizations (members, teams, cross-repo issue triage), notifications, search, repo creation, branch creation, and direct file editing committed straight to a branch via the Contents API. Supports the full fix-an-issue → branch → edit → PR flow end-to-end.
+- **Actions:** list_prs, view_pr, pr_checks, create_pr, create_pr_comment, merge_pr, list_issues, view_issue, create_issue, comment_issue, close_issue, list_runs, view_run, rerun, list_repos, list_notifications, search_repos, search_issues, get_user, list_orgs, view_org, list_org_members, list_org_teams, list_org_issues, create_repo, read_file, write_file, delete_file, list_dir, create_branch, api
+- **Parameters:** `repo` (owner/repo — owner can be user or org), `org`, `number`, `state`, `limit`, `title`, `body`, `head`, `base`, `from_branch`, `draft`, `merge_method`, `run_id`, `failed_only`, `user`, `username`, `query`, `path`, `content`, `branch`, `sha`, `message`, `method`, `name`, `description`, `private`, `auto_init`
+- Requires a GitHub Personal Access Token (Settings → GitHub). Stored in `EncryptedSharedPreferences`. Org actions need `read:org`; creating repos in an org needs `admin:org`.
 - Full reference: [`github-tool.md`](github-tool.md)
 
 ## Custom Commands

@@ -24,6 +24,7 @@ jsoup = "1.17.2"
 pdfbox = "2.0.27.0"
 work = "2.10.0"
 hiltWork = "1.2.0"
+mlkitTextRecognition = "16.0.1"
 mockito = "5.14.2"
 mockitoKotlin = "5.4.0"
 coroutinesTest = "1.8.1"
@@ -85,6 +86,10 @@ hilt-work-compiler = { group = "androidx.hilt", name = "hilt-compiler", version.
 
 # Security
 security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
+
+# ML Kit on-device OCR (used by ScreenAnnotator as a fallback when the
+# accessibility tree is empty/sparse, e.g. on Compose / React Native UIs).
+mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitTextRecognition" }
 
 # Test (JVM unit tests)
 mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito" }
