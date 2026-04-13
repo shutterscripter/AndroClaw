@@ -81,7 +81,9 @@ class ScheduleWorker @AssistedInject constructor(
     }
 
     private suspend fun runAgentLoop(userPrompt: String): String {
-        val apiKey = getApiKey() ?: return "No API key configured."
+        val providerId = prefs.getString(Constants.PREF_PROVIDER, "claude") ?: "claude"
+        val apiKey = getApiKey()?.trim().orEmpty()
+        if (providerId != "ollama" && apiKey.isBlank()) return "No API key configured."
         val provider = resolveProvider() ?: return "No LLM provider configured."
         val model = getModel()
         val systemPrompt = systemPromptManager.buildSystemPrompt()

@@ -183,6 +183,7 @@ fun SettingsScreen(
                     "gemini" -> "AIza..."
                     "groq" -> "gsk_..."
                     "openrouter" -> "sk-or-v1-..."
+                    "ollama" -> "Optional (leave blank for local)"
                     else -> "Enter API key..."
                 }
 
@@ -218,6 +219,35 @@ fun SettingsScreen(
                         cursorColor = Accent
                     )
                 )
+            }
+
+            // ── Ollama server URL (OpenAI-compatible /v1) ──
+            if (viewModel.getProvider() == "ollama") {
+                SettingsSection(title = "Ollama server", icon = Icons.Outlined.Cloud) {
+                    var baseUrl by remember { mutableStateOf(viewModel.getOllamaBaseUrl()) }
+                    Text(
+                        text = "Paste your Ollama host (e.g. http://192.168.31.200:11434). Phone and server must be on the same network.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = baseUrl,
+                        onValueChange = {
+                            baseUrl = it
+                            viewModel.setOllamaBaseUrl(it)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Base URL") },
+                        placeholder = { Text("http://192.168.31.200:11434") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Accent,
+                            cursorColor = Accent
+                        )
+                    )
+                }
             }
 
             // ── Exa Web Search ──
@@ -332,53 +362,80 @@ fun SettingsScreen(
 
             // ── Model Selection (dynamic per provider) ──
             SettingsSection(title = "Model", icon = Icons.Outlined.SmartToy) {
-                var expanded by remember { mutableStateOf(false) }
-                val models = viewModel.getModelsForCurrentProvider()
-                val currentModel = viewModel.getModel()
-                val currentModelInfo = models.find { it.id == currentModel }
-
-                ExposedDropdownMenuBox(
-                    expanded = expanded,
-                    onExpandedChange = { expanded = it }
-                ) {
-                    OutlinedTextField(
-                        value = currentModelInfo?.displayName ?: currentModel,
-                        onValueChange = {},
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor(MenuAnchorType.PrimaryNotEditable),
-                        readOnly = true,
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                        shape = RoundedCornerShape(14.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent)
+                val currentProviderForModel = viewModel.getProvider()
+                if (currentProviderForModel == "ollama") {
+                    var modelId by remember(currentProviderForModel) { mutableStateOf(viewModel.getModel()) }
+                    Text(
+                        text = "Exact model name as shown by `ollama list` on the server (e.g. llama3.2, mistral:latest).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    ExposedDropdownMenu(
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = modelId,
+                        onValueChange = {
+                            modelId = it
+                            viewModel.setModel(it.trim())
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Ollama model") },
+                        placeholder = { Text("llama3.2") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Accent,
+                            cursorColor = Accent
+                        )
+                    )
+                } else {
+                    var expanded by remember { mutableStateOf(false) }
+                    val models = viewModel.getModelsForCurrentProvider()
+                    val currentModel = viewModel.getModel()
+                    val currentModelInfo = models.find { it.id == currentModel }
+
+                    ExposedDropdownMenuBox(
                         expanded = expanded,
-                        onDismissRequest = { expanded = false }
+                        onExpandedChange = { expanded = it }
                     ) {
-                        models.forEach { model ->
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(model.displayName, style = MaterialTheme.typography.bodyLarge)
-                                        Text(
-                                            buildString {
-                                                append(model.id)
-                                                if (model.contextWindow > 0) {
-                                                    append(" | ${model.contextWindow / 1000}k ctx")
-                                                }
-                                                if (model.supportsVision) append(" | Vision")
-                                            },
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                        OutlinedTextField(
+                            value = currentModelInfo?.displayName ?: currentModel,
+                            onValueChange = {},
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                            readOnly = true,
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = expanded,
+                            onDismissRequest = { expanded = false }
+                        ) {
+                            models.forEach { model ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(model.displayName, style = MaterialTheme.typography.bodyLarge)
+                                            Text(
+                                                buildString {
+                                                    append(model.id)
+                                                    if (model.contextWindow > 0) {
+                                                        append(" | ${model.contextWindow / 1000}k ctx")
+                                                    }
+                                                    if (model.supportsVision) append(" | Vision")
+                                                },
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        viewModel.setModel(model.id)
+                                        expanded = false
                                     }
-                                },
-                                onClick = {
-                                    viewModel.setModel(model.id)
-                                    expanded = false
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                 }

@@ -81,8 +81,11 @@ class ClaudeRepository @Inject constructor(
         conversationHistory: MutableList<Message>,
         userText: String
     ): Result<String> {
-        val apiKey = getApiKey()
-            ?: return Result.failure(Exception("API key not set. Please go to Settings to add your API key."))
+        val providerId = getProvider()
+        val apiKey = getApiKey()?.trim().orEmpty()
+        if (providerId != "ollama" && apiKey.isEmpty()) {
+            return Result.failure(Exception("API key not set. Please go to Settings to add your API key."))
+        }
 
         val provider = resolveProvider()
             ?: return Result.failure(Exception("Provider \"${getProvider()}\" not found."))
@@ -100,7 +103,6 @@ class ClaudeRepository @Inject constructor(
 
             val systemPrompt = buildSystemPrompt()
             val model = getModel()
-            val providerId = getProvider()
             // Streaming is always on when the provider supports it — there is no
             // user toggle. Providers that don't support SSE fall through to the
             // non-streaming path automatically.
@@ -239,6 +241,27 @@ class ClaudeRepository @Inject constructor(
         var currentToolName: String? = null
         val toolInputBuilder = StringBuilder()
 
+        fun flushAssembledTool() {
+            val tid = currentToolId ?: return
+            val tname = currentToolName ?: return
+            val input = try {
+                jsonObjectToMap(JSONObject(toolInputBuilder.toString()))
+            } catch (_: Exception) {
+                emptyMap()
+            }
+            contentBlocks.add(
+                ContentBlock(
+                    type = "tool_use",
+                    id = tid,
+                    name = tname,
+                    input = input
+                )
+            )
+            currentToolId = null
+            currentToolName = null
+            toolInputBuilder.clear()
+        }
+
         provider.streamMessage(apiKey, model, systemPrompt, messages, tools.ifEmpty { null }, Constants.MAX_TOKENS)
             .collect { chunk ->
                 when (chunk) {
@@ -252,6 +275,10 @@ class ClaudeRepository @Inject constructor(
                             contentBlocks.add(ContentBlock(type = "text", text = textBuilder.toString()))
                             textBuilder.clear()
                         }
+                        // Multi-tool in one SSE burst (e.g. Ollama): finish previous call before the next start.
+                        if (currentToolId != null && toolInputBuilder.isNotEmpty()) {
+                            flushAssembledTool()
+                        }
                         currentToolId = chunk.id
                         currentToolName = chunk.name
                         toolInputBuilder.clear()
@@ -260,29 +287,22 @@ class ClaudeRepository @Inject constructor(
                         toolInputBuilder.append(chunk.json)
                     }
                     is StreamChunk.ToolUseEnd -> {
-                        val input = try {
-                            val json = JSONObject(toolInputBuilder.toString())
-                            jsonObjectToMap(json)
-                        } catch (_: Exception) { emptyMap() }
-
-                        contentBlocks.add(ContentBlock(
-                            type = "tool_use",
-                            id = currentToolId,
-                            name = currentToolName,
-                            input = input
-                        ))
-                        currentToolId = null
-                        currentToolName = null
-                        toolInputBuilder.clear()
+                        flushAssembledTool()
                     }
                     is StreamChunk.Done -> {
-                        stopReason = chunk.stopReason
+                        // SSE ends with [DONE] -> Done(null); keep the last non-null finish_reason (e.g. tool_calls).
+                        if (chunk.stopReason != null) {
+                            stopReason = chunk.stopReason
+                        }
                     }
                     is StreamChunk.Error -> {
                         throw Exception(chunk.message)
                     }
                 }
             }
+
+        // OpenAI/Ollama streaming: tool_calls may arrive fully formed without ToolUseEnd
+        flushAssembledTool()
 
         // Flush remaining text
         if (textBuilder.isNotEmpty()) {

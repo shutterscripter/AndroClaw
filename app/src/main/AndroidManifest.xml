@@ -72,6 +72,7 @@
 
     <application
         android:name=".AndroClawApplication"
+        android:usesCleartextTraffic="true"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -96,7 +97,8 @@
             android:name=".ChatActivity"
             android:exported="false"
             android:launchMode="singleTop"
-            android:theme="@style/Theme.AndroClaw" />
+            android:theme="@style/Theme.AndroClaw"
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".SettingsActivity"

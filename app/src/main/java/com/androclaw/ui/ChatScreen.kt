@@ -56,6 +56,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -76,6 +78,8 @@ fun ChatScreen(
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     LaunchedEffect(uiState.showOfflineNetworkSnackbar) {
         if (!uiState.showOfflineNetworkSnackbar) return@LaunchedEffect
@@ -144,7 +148,13 @@ fun ChatScreen(
                         }
                     },
                     navigationIcon = {
-                        IconButton(onClick = { viewModel.toggleDrawer() }) {
+                        IconButton(onClick = {
+                            if (!uiState.isDrawerOpen) {
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                            }
+                            viewModel.toggleDrawer()
+                        }) {
                             Icon(
                                 imageVector = Icons.Outlined.Menu,
                                 contentDescription = "Chat history",
@@ -237,6 +247,7 @@ fun ChatScreen(
                 activeConversationId = uiState.activeConversationId,
                 onNewChat = { viewModel.startNewConversation() },
                 onSelectConversation = { viewModel.switchToConversation(it) },
+                onRenameConversation = { id, title -> viewModel.renameConversation(id, title) },
                 onDeleteConversation = { viewModel.deleteConversation(it) }
             )
         }

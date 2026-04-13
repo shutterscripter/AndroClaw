@@ -1,7 +1,11 @@
 package com.androclaw.api.provider
 
+import android.content.SharedPreferences
+import com.androclaw.utils.Constants
+import com.androclaw.utils.normalizeOllamaOpenAiBaseUrl
 import okhttp3.OkHttpClient
 import javax.inject.Inject
+import javax.inject.Named
 import javax.inject.Singleton
 
 /**
@@ -10,7 +14,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class ProviderRegistry @Inject constructor(
-    okHttpClient: OkHttpClient
+    okHttpClient: OkHttpClient,
+    @Named("regular") private val prefs: SharedPreferences
 ) {
     private val providers = mutableMapOf<String, LlmProvider>()
 
@@ -48,11 +53,33 @@ class ProviderRegistry @Inject constructor(
             )
         )
 
+        // Ollama — OpenAI-compatible endpoint (ollama serve). Base URL from Settings.
+        val ollama = OpenAIProvider(
+            okHttpClient = okHttpClient,
+            id = "ollama",
+            displayName = "Ollama (local)",
+            baseUrl = "http://10.0.2.2:11434/v1",
+            dynamicBaseUrl = {
+                val saved = prefs.getString(Constants.PREF_OLLAMA_BASE_URL, "")?.trim().orEmpty()
+                if (saved.isNotEmpty()) normalizeOllamaOpenAiBaseUrl(saved) else "http://10.0.2.2:11434/v1"
+            },
+            supportedModels = listOf(
+                ModelInfo("llama3.2", "Llama 3.2", 131072),
+                ModelInfo("llama3.1", "Llama 3.1", 131072),
+                ModelInfo("mistral", "Mistral", 32768),
+                ModelInfo("qwen2.5", "Qwen 2.5", 32768),
+                ModelInfo("phi3", "Phi 3", 131072),
+                ModelInfo("gemma2", "Gemma 2", 8192),
+                ModelInfo("deepseek-r1:8b", "DeepSeek R1 8B", 8192)
+            )
+        )
+
         register(claude)
         register(openai)
         register(gemini)
         register(groq)
         register(openRouter)
+        register(ollama)
     }
 
     fun register(provider: LlmProvider) {

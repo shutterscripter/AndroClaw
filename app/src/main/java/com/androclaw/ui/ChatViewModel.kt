@@ -164,8 +164,13 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun hasApiKey(): Boolean =
-        !encryptedPrefs.getString(Constants.PREF_API_KEY, null).isNullOrBlank()
+    fun hasApiKey(): Boolean {
+        val provider = prefs.getString(Constants.PREF_PROVIDER, "claude") ?: "claude"
+        if (provider == "ollama") return true
+        val per = encryptedPrefs.getString("api_key_$provider", null)
+        if (!per.isNullOrBlank()) return true
+        return !encryptedPrefs.getString(Constants.PREF_API_KEY, null).isNullOrBlank()
+    }
 
     // ── Conversation Management ──
 
@@ -209,6 +214,13 @@ class ChatViewModel @Inject constructor(
             switchToConversation(pick.id)
         } else {
             startNewConversation()
+        }
+    }
+
+    fun renameConversation(conversationId: Long, newTitle: String) {
+        viewModelScope.launch {
+            val title = newTitle.trim().ifBlank { "Untitled chat" }.take(120)
+            conversationDao.updateTitle(conversationId, title)
         }
     }
 

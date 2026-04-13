@@ -15,6 +15,8 @@ object Constants {
     const val PREF_ONBOARDING_DONE = "onboarding_done"
     const val PREF_ENABLED_TOOLS = "enabled_tools"
     const val PREF_PROVIDER = "provider"
+    /** OpenAI-compatible API root for Ollama, e.g. http://192.168.1.5:11434/v1 */
+    const val PREF_OLLAMA_BASE_URL = "ollama_base_url"
     const val PREF_GITHUB_TOKEN = "github_token"
     const val PREF_EXA_API_KEY = "exa_api_key"
     const val PREF_ACTIVE_CONVERSATION_ID = "active_conversation_id"

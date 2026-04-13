@@ -10,6 +10,7 @@ import com.androclaw.db.ConversationDao
 import com.androclaw.db.MessageDao
 import com.androclaw.service.ScreenCaptureManager
 import com.androclaw.utils.Constants
+import com.androclaw.utils.normalizeOllamaOpenAiBaseUrl
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -59,6 +60,16 @@ class SettingsViewModel @Inject constructor(
         if (providerId == getProvider()) {
             encryptedPrefs.edit().putString(Constants.PREF_API_KEY, key).apply()
         }
+    }
+
+    // ── Ollama (local OpenAI-compatible URL) ──
+
+    fun getOllamaBaseUrl(): String =
+        normalizeOllamaOpenAiBaseUrl(prefs.getString(Constants.PREF_OLLAMA_BASE_URL, "") ?: "")
+
+    fun setOllamaBaseUrl(url: String) {
+        val normalized = normalizeOllamaOpenAiBaseUrl(url)
+        prefs.edit().putString(Constants.PREF_OLLAMA_BASE_URL, normalized).apply()
     }
 
     // ── Exa API Key (web search provider) ──

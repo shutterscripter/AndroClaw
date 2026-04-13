@@ -10,10 +10,13 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -71,12 +74,13 @@ fun InputBar(
         }
     }
 
+    // One combined inset: avoids stacking navigationBarsPadding + imePadding (huge gap) while
+    // still lifting above the keyboard when adjustResize does not apply correctly on some devices.
     Box(
         modifier = modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.background)
-            .navigationBarsPadding()
-            .imePadding()
+            .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
     ) {
         Row(
             modifier = Modifier

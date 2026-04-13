@@ -8,6 +8,17 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
+/**
+ * Ollama exposes OpenAI-compatible APIs at `.../v1/chat/completions`.
+ * Accepts a host root like `http://192.168.1.5:11434` or `http://host:11434/` and ensures `/v1`.
+ */
+fun normalizeOllamaOpenAiBaseUrl(input: String): String {
+    var u = input.trim().trimEnd('/')
+    if (u.isEmpty()) return ""
+    if (!u.endsWith("/v1", ignoreCase = true)) u = "$u/v1"
+    return u
+}
+
 fun Context.hasInternetConnectivity(): Boolean {
     val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     val network = cm.activeNetwork ?: return false
