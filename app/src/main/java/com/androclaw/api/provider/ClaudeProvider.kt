@@ -251,7 +251,7 @@ class ClaudeProvider(private val okHttpClient: OkHttpClient) : LlmProvider {
 
         return LlmResponse(
             content = contentBlocks,
-            stopReason = json.optString("stop_reason", null),
+            stopReason = json.optString("stop_reason", "").takeIf { it.isNotEmpty() },
             model = json.optString("model", "")
         )
     }

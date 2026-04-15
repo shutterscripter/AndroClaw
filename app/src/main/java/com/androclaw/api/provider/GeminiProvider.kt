@@ -246,7 +246,7 @@ class GeminiProvider(private val okHttpClient: OkHttpClient) : LlmProvider {
         val candidate = candidates.getJSONObject(0)
         val content = candidate.optJSONObject("content") ?: return LlmResponse(emptyList(), null, model)
         val parts = content.optJSONArray("parts") ?: return LlmResponse(emptyList(), null, model)
-        val finishReason = candidate.optString("finishReason", null)
+        val finishReason = candidate.optString("finishReason", "").takeIf { it.isNotEmpty() }
 
         val contentBlocks = mutableListOf<ContentBlock>()
         for (i in 0 until parts.length()) {

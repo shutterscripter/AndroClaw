@@ -303,7 +303,7 @@ class OpenAIProvider(
 
         val choice = choices.getJSONObject(0)
         val message = choice.optJSONObject("message") ?: return LlmResponse(emptyList(), null, model)
-        val finishReason = choice.optString("finish_reason", null)
+        val finishReason = choice.optString("finish_reason", "").takeIf { it.isNotEmpty() }
 
         val contentBlocks = mutableListOf<ContentBlock>()
 
